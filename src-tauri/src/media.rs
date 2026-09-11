@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::ffi::c_void;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -16,11 +17,17 @@ pub struct MediaState {
     pub art: Option<String>, // data URL (base64 PNG/JPEG)
 }
 
-static CONTROL_TX: Mutex<Option<Sender<String>>> = Mutex::new(None);
+/// What wakes the backend loop: SMTC change events, or a UI control action.
+enum Msg {
+    Refresh,
+    Control(String),
+}
+
+static CONTROL_TX: Mutex<Option<Sender<Msg>>> = Mutex::new(None);
 
 pub fn send_control(action: &str) {
     if let Some(tx) = CONTROL_TX.lock().unwrap().as_ref() {
-        let _ = tx.send(action.to_string());
+        let _ = tx.send(Msg::Control(action.to_string()));
     }
 }
 
@@ -30,7 +37,11 @@ pub fn spawn(app: AppHandle) {
 
 #[cfg(target_os = "windows")]
 fn backend_loop(app: AppHandle) {
-    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager as SessionManager;
+    use windows::Media::Control::{
+        GlobalSystemMediaTransportControlsSession as Session,
+        GlobalSystemMediaTransportControlsSessionManager as SessionManager,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus,
+    };
     use windows::Win32::System::WinRT::RoInitialize;
     use windows::Win32::System::WinRT::RO_INIT_MULTITHREADED;
 
@@ -41,14 +52,13 @@ fn backend_loop(app: AppHandle) {
         let _ = RoInitialize(RO_INIT_MULTITHREADED);
     }
 
-    let (tx, rx) = mpsc::channel::<String>();
-    *CONTROL_TX.lock().unwrap() = Some(tx);
+    let (tx, rx) = mpsc::channel::<Msg>();
+    *CONTROL_TX.lock().unwrap() = Some(tx.clone());
 
     // RequestAsync can fail right after login; retry until it succeeds.
     let manager = loop {
-        let op = unsafe { SessionManager::RequestAsync() };
-        match op {
-            Ok(op) => match unsafe { op.get() } {
+        match SessionManager::RequestAsync() {
+            Ok(op) => match op.get() {
                 Ok(m) => {
                     eprintln!("[wmp] SMTC manager acquired");
                     break m;
@@ -65,64 +75,100 @@ fn backend_loop(app: AppHandle) {
         }
     };
 
-    let mut last = MediaState::default();
-    let mut last_art_key = String::new();
-    let mut idle_rounds: u32 = 0;
+    // Event-driven: any change wakes the loop instantly, no polling.
+    if let Err(e) = manager.CurrentSessionChanged(&wake_handler(tx.clone())) {
+        eprintln!("[wmp] CurrentSessionChanged bind failed: {e}");
+    }
 
+    let mut last = MediaState::default();
+    // Some(track key) = art is current for that track; None = track changed,
+    // art cleared, waiting for SMTC to settle before re-reading.
+    let mut last_art_key: Option<String> = None;
+    // Previous track's art bytes: SMTC keeps serving the OLD artwork stream
+    // for a while after a track change; identical bytes mean a stale read.
+    let mut prev_art: Option<String> = None;
+    let mut stale_reads: u32 = 0;
+    // Session whose change events we're currently subscribed to.
+    let mut bound: Option<Session> = None;
+
+    // ponytail: 5s re-sync instead of the old 1s poll; the frontend
+    // interpolates position in between, so events carry all real changes.
     loop {
         let mut state = MediaState::default();
-        let mut current_session: Option<windows::Media::Control::GlobalSystemMediaTransportControlsSession> =
-            None;
-        let session = unsafe { manager.GetCurrentSession() };
-        if let Err(e) = &session {
-            eprintln!("[wmp] GetCurrentSession error: {e}");
+
+        // Rebind change events whenever the active session changes (this also
+        // covers the very first session appearing).
+        let current = manager.GetCurrentSession().ok();
+        if session_key(current.as_ref()) != session_key(bound.as_ref()) {
+            if let Some(s) = &current {
+                bind_session(s, &tx);
+            }
+            bound = current.clone();
         }
-        if let Ok(session) = session {
-            current_session = Some(session.clone());
-            let props = unsafe { session.TryGetMediaPropertiesAsync() }
-                .and_then(|op| unsafe { op.get() });
+
+        if let Some(session) = &current {
+            let props = session
+                .TryGetMediaPropertiesAsync()
+                .and_then(|op| op.get());
             if let Err(e) = &props {
                 eprintln!("[wmp] TryGetMediaPropertiesAsync error: {e}");
             }
             if let Ok(props) = props {
                 state.available = true;
-                state.title = unsafe { props.Title() }.unwrap_or_default().to_string();
-                state.artist = unsafe { props.Artist() }.unwrap_or_default().to_string();
-                state.album = unsafe { props.AlbumTitle() }.unwrap_or_default().to_string();
+                state.title = props.Title().unwrap_or_default().to_string();
+                state.artist = props.Artist().unwrap_or_default().to_string();
+                state.album = props.AlbumTitle().unwrap_or_default().to_string();
 
-                // Re-read artwork only when the track changes — but never cache a
-                // failed read, so the currently-playing track's art is retried
-                // every poll until it succeeds (fixes missing art at startup).
+                // SMTC hands out the PREVIOUS track's thumbnail stream for a
+                // short moment after the metadata event fires, so reading art
+                // in the same tick as a track change yields stale bytes (art
+                // lags one track behind). On a track change: clear art, then
+                // self-wake and read once the provider has settled.
                 let art_key = format!("{}|{}|{}", state.title, state.artist, state.album);
-                if art_key != last_art_key || last.art.is_none() {
-                    match read_thumbnail(&props) {
-                        Some(art) => {
-                            last_art_key = art_key;
-                            last.art = Some(art.clone());
-                            state.art = Some(art);
+                match &last_art_key {
+                    None => {
+                        // Settled (or startup): attempt the read, retry soon on failure.
+                        if let Some(art) = read_thumbnail(&props) {
+                            // Byte-identical to the previous track's art = SMTC
+                            // is still serving the old stream; retry until it
+                            // swaps. ponytail: cap of 5 guards back-to-back
+                            // tracks that legitimately share artwork — after
+                            // ~5s of retries we accept the read.
+                            if prev_art.as_ref() == Some(&art) && stale_reads < 5 {
+                                stale_reads += 1;
+                                wake_later(&tx, Duration::from_secs(1));
+                            } else {
+                                stale_reads = 0;
+                                last_art_key = Some(art_key);
+                                last.art = Some(art.clone());
+                                state.art = Some(art);
+                            }
+                        } else {
+                            wake_later(&tx, Duration::from_secs(1));
                         }
-                        None => state.art = last.art.clone(),
                     }
-                } else {
-                    state.art = last.art.clone();
+                    Some(key) if *key != art_key => {
+                        // Track changed: keep the old bytes for staleness
+                        // detection, clear art from the UI, read once settled.
+                        prev_art = last.art.take();
+                        stale_reads = 0;
+                        last_art_key = None;
+                        state.art = None;
+                        wake_later(&tx, Duration::from_millis(500));
+                    }
+                    Some(_) => state.art = last.art.clone(),
                 }
             }
-            if let Ok(info) = unsafe { session.GetPlaybackInfo() } {
-                use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus;
+            if let Ok(info) = session.GetPlaybackInfo() {
                 state.playing = matches!(
-                    unsafe { info.PlaybackStatus() }.ok(),
+                    info.PlaybackStatus().ok(),
                     Some(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
                         | Some(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Changing)
                 );
             }
-            if let Ok(tl) = unsafe { session.GetTimelineProperties() } {
-                state.position_ms = unsafe { tl.Position() }.map(|t| t.Duration as u64 / 10_000).unwrap_or(0);
-                state.duration_ms = unsafe { tl.EndTime() }.map(|t| t.Duration as u64 / 10_000).unwrap_or(0);
-            }
-
-            // Drain any controls queued while polling.
-            while let Ok(action) = rx.try_recv() {
-                apply_control(&session, &action);
+            if let Ok(tl) = session.GetTimelineProperties() {
+                state.position_ms = tl.Position().map(|t| t.Duration as u64 / 10_000).unwrap_or(0);
+                state.duration_ms = tl.EndTime().map(|t| t.Duration as u64 / 10_000).unwrap_or(0);
             }
         }
 
@@ -131,23 +177,70 @@ fn backend_loop(app: AppHandle) {
             let _ = app.emit("media-state", &state);
         }
 
-        // Throttle to 5s when nothing is playing, 1s otherwise (position ticking).
-        if state.available && state.playing {
-            idle_rounds = 0;
-        } else {
-            idle_rounds += 1;
-        }
-        let delay = if idle_rounds > 2 { 5 } else { 1 };
-
-        // Sleep, but wake the instant a control arrives so clicks don't wait
-        // for the next poll tick; then re-poll immediately for fast feedback.
-        if let Ok(action) = rx.recv_timeout(Duration::from_secs(delay)) {
-            if let Some(session) = &current_session {
-                apply_control(session, &action);
-                while let Ok(extra) = rx.try_recv() {
-                    apply_control(session, &extra);
+        // Block until an SMTC event fires, a control arrives, or the 5s
+        // position re-sync is due. Controls trigger an immediate re-read.
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Msg::Control(action)) => {
+                if let Some(session) = &current {
+                    apply_control(session, &action);
+                    while let Ok(Msg::Control(extra)) = rx.try_recv() {
+                        apply_control(session, &extra);
+                    }
                 }
             }
+            Ok(Msg::Refresh) | Err(_) => {}
+        }
+    }
+}
+
+/// SMTC event handler that just wakes the backend loop; generic because each
+/// WinRT event carries its own sender/args types (inferred at the call site).
+#[cfg(target_os = "windows")]
+fn wake_handler<T, A>(tx: Sender<Msg>) -> windows::Foundation::TypedEventHandler<T, A>
+where
+    T: windows::core::RuntimeType,
+    A: windows::core::RuntimeType,
+{
+    windows::Foundation::TypedEventHandler::new(move |_, _| {
+        let _ = tx.send(Msg::Refresh);
+        Ok(())
+    })
+}
+
+/// One-shot delayed refresh: lets SMTC settle before the next state read.
+#[cfg(target_os = "windows")]
+fn wake_later(tx: &Sender<Msg>, delay: Duration) {
+    let tx = tx.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        let _ = tx.send(Msg::Refresh);
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn session_key(
+    session: Option<&windows::Media::Control::GlobalSystemMediaTransportControlsSession>,
+) -> Option<*mut c_void> {
+    use windows::core::{Interface, IUnknown};
+    session
+        .and_then(|s| s.cast::<IUnknown>().ok())
+        .map(|u| u.as_raw())
+}
+
+#[cfg(target_os = "windows")]
+fn bind_session(
+    session: &windows::Media::Control::GlobalSystemMediaTransportControlsSession,
+    tx: &Sender<Msg>,
+) {
+    // Each SMTC event carries its own EventArgs type; every handler just
+    // wakes the backend loop.
+    for bind in [
+        session.MediaPropertiesChanged(&wake_handler(tx.clone())),
+        session.PlaybackInfoChanged(&wake_handler(tx.clone())),
+        session.TimelinePropertiesChanged(&wake_handler(tx.clone())),
+    ] {
+        if let Err(e) = bind {
+            eprintln!("[wmp] session event bind failed: {e}");
         }
     }
 }
@@ -159,16 +252,16 @@ fn read_thumbnail(
     use base64::Engine;
     use windows::Storage::Streams::DataReader;
 
-    let thumb = unsafe { props.Thumbnail() }.ok()?;
-    let stream = unsafe { thumb.OpenReadAsync() }.ok()?.get().ok()?;
-    let size = unsafe { stream.Size() }.unwrap_or(0) as u32;
+    let thumb = props.Thumbnail().ok()?;
+    let stream = thumb.OpenReadAsync().ok()?.get().ok()?;
+    let size = stream.Size().unwrap_or(0) as u32;
     if size == 0 {
         return None;
     }
-    let reader = unsafe { DataReader::CreateDataReader(&stream) }.ok()?;
-    unsafe { reader.LoadAsync(size) }.ok()?.get().ok()?;
+    let reader = DataReader::CreateDataReader(&stream).ok()?;
+    reader.LoadAsync(size).ok()?.get().ok()?;
     let mut bytes = vec![0u8; size as usize];
-    unsafe { reader.ReadBytes(&mut bytes) }.ok()?;
+    reader.ReadBytes(&mut bytes).ok()?;
     let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
         "image/png"
     } else {
@@ -187,9 +280,9 @@ fn apply_control(
     action: &str,
 ) {
     let result = match action {
-        "play_pause" => unsafe { session.TryTogglePlayPauseAsync() }.and_then(|op| unsafe { op.get() }),
-        "next" => unsafe { session.TrySkipNextAsync() }.and_then(|op| unsafe { op.get() }),
-        "prev" => unsafe { session.TrySkipPreviousAsync() }.and_then(|op| unsafe { op.get() }),
+        "play_pause" => session.TryTogglePlayPauseAsync().and_then(|op| op.get()),
+        "next" => session.TrySkipNextAsync().and_then(|op| op.get()),
+        "prev" => session.TrySkipPreviousAsync().and_then(|op| op.get()),
         _ => return,
     };
     if let Err(e) = result {

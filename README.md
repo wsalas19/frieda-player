@@ -62,7 +62,7 @@ Or build from source (below).
 │  Rust backend (src-tauri/src)          React UI (src/)           │
 │  ┌──────────────────────────┐          ┌──────────────────────┐  │
 │  │ media.rs                 │ media-   │ App.tsx              │  │
-│  │  SMTC poll loop (MTA)    │ state    │  card · progress ·   │  │
+│  │  SMTC event loop (MTA)   │ state    │  card · progress ·   │  │
 │  │  artwork → base64        │ event    │  hover controls      │  │
 │  │  state diffing           │ ───────▶ │  local interpolation │  │
 │  │  control channel  ◀──────│──────────│  control action      │  │
@@ -73,7 +73,7 @@ Or build from source (below).
 
 | Piece | Where |
 | --- | --- |
-| SMTC polling, artwork decoding, transport controls | `src-tauri/src/media.rs` |
+| SMTC event loop, artwork decoding, transport controls | `src-tauri/src/media.rs` |
 | Tray menu, autostart, window management | `src-tauri/src/lib.rs` |
 | Widget UI (drag region, controls, progress) | `src/App.tsx` |
 
@@ -85,11 +85,20 @@ A few implementation notes worth knowing if you're hacking on it:
 
 - The media thread initializes WinRT as **multithreaded (MTA)** — blocking
   `IAsyncOperation::get()` on an STA thread without a message pump deadlocks.
-- Controls are delivered through an mpsc channel that the poll loop waits on
-  with `recv_timeout`, so a click wakes the loop instantly instead of waiting
-  for the next tick.
-- Artwork reads are retried every poll until they succeed, so the
-  already-playing track renders correctly on app start.
+- The loop is **event-driven, not polling**: handlers on SMTC's
+  `MediaPropertiesChanged` / `PlaybackInfoChanged` / `TimelinePropertiesChanged`
+  (plus `CurrentSessionChanged` on the manager) push a refresh message into the
+  same mpsc channel the UI's control actions use, so any change — including a
+  click — wakes the loop instantly. A 5s `recv_timeout` fallback just re-syncs
+  the position for the frontend's interpolator.
+- **Artwork staleness**: some providers (Tidal notably) keep serving the
+  *previous* track's artwork stream for seconds after the metadata event fires,
+  and the title settles before the art does — so no fixed delay works. Instead,
+  a read whose bytes are identical to the previous track's art is treated as
+  stale and retried every second until the bytes differ (capped at 5 retries to
+  tolerate back-to-back tracks that legitimately share artwork). Reads that
+  fail outright are also retried, so the already-playing track renders
+  correctly on app start.
 
 ## Development
 
