@@ -35,7 +35,8 @@ touches audio itself.
 - **Live metadata** — artwork, title, artist · album, and a smoothly animated
   progress bar
 - **Hover controls** — previous / play-pause / next with instant feedback
-  (optimistic UI + pending spinner)
+  (optimistic UI + pending spinner), plus a click-to-seek bar that appears
+  along the bottom edge on hover
 - **System tray resident** — right-click for Show/Hide, Always on Top,
   Run at Startup, Check for Updates, and Quit
 - **Sips resources** — the backend polls SMTC at 1 Hz while playing and
@@ -77,9 +78,11 @@ Or build from source (below).
 | Tray menu, autostart, window management | `src-tauri/src/lib.rs` |
 | Widget UI (drag region, controls, progress) | `src/App.tsx` |
 
-The IPC surface is two messages: a `media-state` event (backend → frontend,
-JSON `MediaState`) and a `control` command (frontend → backend,
-`play_pause | next | prev`).
+The IPC surface is three messages: a `media-state` event (backend → frontend,
+lightweight metadata/timeline JSON), a `media-art` event (backend → frontend,
+fired only when the artwork bytes change, so the base64 payload never rides
+along with position ticks), and a `control` command (frontend → backend,
+`play_pause | next | prev | seek:<ms>`).
 
 A few implementation notes worth knowing if you're hacking on it:
 
@@ -96,9 +99,12 @@ A few implementation notes worth knowing if you're hacking on it:
   and the title settles before the art does — so no fixed delay works. Instead,
   a read whose bytes are identical to the previous track's art is treated as
   stale and retried every second until the bytes differ (capped at 5 retries to
-  tolerate back-to-back tracks that legitimately share artwork). Reads that
-  fail outright are also retried, so the already-playing track renders
-  correctly on app start.
+  tolerate back-to-back tracks that legitimately share artwork) — except when
+  the new track is on the *same album*, in which case the lingering stream is
+  by definition the correct art and is reused immediately. Reads that fail
+  outright are also retried, so the already-playing track renders correctly on
+  app start (the frontend also fetches the last known state on mount via
+  `get_state`, covering startup with a session already active).
 
 ## Development
 

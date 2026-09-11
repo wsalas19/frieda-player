@@ -10,7 +10,6 @@ interface MediaState {
   position_ms: number;
   duration_ms: number;
   playing: boolean;
-  art: string | null;
 }
 
 const IDLE: MediaState = {
@@ -21,7 +20,6 @@ const IDLE: MediaState = {
   position_ms: 0,
   duration_ms: 0,
   playing: false,
-  art: null,
 };
 
 function fmt(ms: number): string {
@@ -54,6 +52,9 @@ function Spinner() {
 
 export default function App() {
   const [state, setState] = useState<MediaState>(IDLE);
+  // Artwork lives in its own event/state so fat base64 payloads never ride
+  // along with lightweight position/metadata ticks.
+  const [art, setArt] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pendingTimer = useRef<number | null>(null);
@@ -66,6 +67,20 @@ export default function App() {
   });
 
   useEffect(() => {
+    // Startup sync: the backend may have emitted before this listener existed.
+    invoke<{ state: MediaState; art: string | null } | null>("get_state").then((snap) => {
+      if (snap) {
+        lastRef.current = {
+          at: Date.now(),
+          position_ms: snap.state.position_ms,
+          playing: snap.state.playing,
+        };
+        setPosition(snap.state.position_ms);
+        setState(snap.state);
+        setArt(snap.art);
+      }
+    });
+    const unArt = listen<string | null>("media-art", (e) => setArt(e.payload));
     const un = listen<MediaState>("media-state", (e) => {
       const s = e.payload;
       lastRef.current = { at: Date.now(), position_ms: s.position_ms, playing: s.playing };
@@ -83,6 +98,7 @@ export default function App() {
     }, 250);
     return () => {
       un.then((f) => f());
+      unArt.then((f) => f());
       unUpdates.then((f) => f());
       clearInterval(timer);
     };
@@ -106,6 +122,16 @@ export default function App() {
     invoke("control", { action });
   };
   const pct = state.duration_ms > 0 ? Math.min(100, (position / state.duration_ms) * 100) : 0;
+  const seek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (state.duration_ms === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const target =
+      Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1) * state.duration_ms;
+    // Optimistic jump; the backend's timeline event reconciles.
+    setPosition(target);
+    lastRef.current = { ...lastRef.current, at: Date.now(), position_ms: target };
+    invoke("control", { action: `seek:${Math.round(target)}` });
+  };
 
   return (
     <div
@@ -114,15 +140,19 @@ export default function App() {
     >
       {/* Artwork */}
       <div data-tauri-drag-region className="m-2 h-[calc(100%-1rem)] shrink-0">
-        {state.art ? (
+        {art ? (
           <img
-            src={state.art}
+            src={art}
             alt=""
             draggable={false}
             className="h-full w-24 rounded-xl object-cover"
           />
         ) : (
-          <div className="flex h-full w-24 items-center justify-center rounded-xl bg-white/5">
+          <div
+            className={`flex h-full w-24 items-center justify-center rounded-xl bg-white/5 ${
+              state.available ? "animate-pulse" : ""
+            }`}
+          >
             <svg viewBox="0 0 24 24" className="h-8 w-8 fill-white/30">
               <path d="M12 3v10.55A4 4 0 1014 17V7h4V3h-6z" />
             </svg>
@@ -187,6 +217,16 @@ export default function App() {
               <path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" />
             </svg>
           </button>
+          {/* Seek bar — only lives in the hover overlay; h-3 wrapper is the
+              hit area, the visible track is h-1. */}
+          <div
+            onClick={seek}
+            className="pointer-events-auto absolute inset-x-4 bottom-3 flex h-3 cursor-pointer items-center"
+          >
+            <div className="h-1 w-full overflow-hidden rounded-full bg-white/25">
+              <div className="h-full rounded-full bg-white" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
         </div>
       )}
 

@@ -11,6 +11,11 @@ fn control(action: String) {
     media::send_control(&action);
 }
 
+#[tauri::command]
+fn get_state() -> Option<media::Snapshot> {
+    media::current_state()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -19,7 +24,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .invoke_handler(tauri::generate_handler![control])
+        .invoke_handler(tauri::generate_handler![control, get_state])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Show / Hide Widget", true, None::<&str>)?;
             let on_top = CheckMenuItem::with_id(app, "on_top", "Always on Top", true, true, None::<&str>)?;

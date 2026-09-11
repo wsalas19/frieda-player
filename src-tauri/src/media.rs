@@ -14,7 +14,14 @@ pub struct MediaState {
     pub position_ms: u64,
     pub duration_ms: u64,
     pub playing: bool,
-    pub art: Option<String>, // data URL (base64 PNG/JPEG)
+}
+
+/// Startup snapshot: last known state + artwork, so the UI can sync on mount
+/// even if events fired before its listener existed.
+#[derive(Serialize, Clone)]
+pub struct Snapshot {
+    pub state: MediaState,
+    pub art: Option<String>,
 }
 
 /// What wakes the backend loop: SMTC change events, or a UI control action.
@@ -24,6 +31,18 @@ enum Msg {
 }
 
 static CONTROL_TX: Mutex<Option<Sender<Msg>>> = Mutex::new(None);
+// Last emitted state, so the UI can sync on mount (startup with an
+// already-playing/paused session fires before the frontend listener exists).
+static LAST_STATE: Mutex<Option<MediaState>> = Mutex::new(None);
+static LAST_ART: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn current_state() -> Option<Snapshot> {
+    let state = LAST_STATE.lock().unwrap().clone()?;
+    Some(Snapshot {
+        state,
+        art: LAST_ART.lock().unwrap().clone(),
+    })
+}
 
 pub fn send_control(action: &str) {
     if let Some(tx) = CONTROL_TX.lock().unwrap().as_ref() {
@@ -81,6 +100,8 @@ fn backend_loop(app: AppHandle) {
     }
 
     let mut last = MediaState::default();
+    // Current artwork bytes, emitted separately from the lightweight state.
+    let mut last_art: Option<String> = None;
     // Some(track key) = art is current for that track; None = track changed,
     // art cleared, waiting for SMTC to settle before re-reading.
     let mut last_art_key: Option<String> = None;
@@ -95,6 +116,7 @@ fn backend_loop(app: AppHandle) {
     // interpolates position in between, so events carry all real changes.
     loop {
         let mut state = MediaState::default();
+        let mut art = last_art.clone();
 
         // Rebind change events whenever the active session changes (this also
         // covers the very first session appearing).
@@ -128,35 +150,39 @@ fn backend_loop(app: AppHandle) {
                 match &last_art_key {
                     None => {
                         // Settled (or startup): attempt the read, retry soon on failure.
-                        if let Some(art) = read_thumbnail(&props) {
+                        if let Some(a) = read_thumbnail(&props) {
                             // Byte-identical to the previous track's art = SMTC
                             // is still serving the old stream; retry until it
                             // swaps. ponytail: cap of 5 guards back-to-back
                             // tracks that legitimately share artwork — after
                             // ~5s of retries we accept the read.
-                            if prev_art.as_ref() == Some(&art) && stale_reads < 5 {
+                            if prev_art.as_ref() == Some(&a) && stale_reads < 5 {
                                 stale_reads += 1;
                                 wake_later(&tx, Duration::from_secs(1));
                             } else {
                                 stale_reads = 0;
                                 last_art_key = Some(art_key);
-                                last.art = Some(art.clone());
-                                state.art = Some(art);
+                                art = Some(a);
                             }
                         } else {
                             wake_later(&tx, Duration::from_secs(1));
                         }
                     }
                     Some(key) if *key != art_key => {
-                        // Track changed: keep the old bytes for staleness
-                        // detection, clear art from the UI, read once settled.
-                        prev_art = last.art.take();
-                        stale_reads = 0;
-                        last_art_key = None;
-                        state.art = None;
-                        wake_later(&tx, Duration::from_millis(500));
+                        if !state.album.is_empty() && state.album == last.album {
+                            // Same album → the "stale" stream SMTC is still
+                            // serving IS the correct artwork; reuse it.
+                            last_art_key = Some(art_key);
+                        } else {
+                            // Track changed: keep the old bytes for staleness
+                            // detection, clear art from the UI, read once settled.
+                            prev_art = art.take();
+                            stale_reads = 0;
+                            last_art_key = None;
+                            wake_later(&tx, Duration::from_millis(500));
+                        }
                     }
-                    Some(_) => state.art = last.art.clone(),
+                    Some(_) => {}
                 }
             }
             if let Ok(info) = session.GetPlaybackInfo() {
@@ -172,8 +198,17 @@ fn backend_loop(app: AppHandle) {
             }
         }
 
+        // Art travels in its own tiny-diff event: it only fires when the bytes
+        // actually change, so the frequent position/metadata ticks never carry
+        // the (large) base64 payload.
+        if art != last_art {
+            last_art = art.clone();
+            *LAST_ART.lock().unwrap() = last_art.clone();
+            let _ = app.emit("media-art", &art);
+        }
         if state != last {
             last = state.clone();
+            *LAST_STATE.lock().unwrap() = Some(state.clone());
             let _ = app.emit("media-state", &state);
         }
 
@@ -283,7 +318,13 @@ fn apply_control(
         "play_pause" => session.TryTogglePlayPauseAsync().and_then(|op| op.get()),
         "next" => session.TrySkipNextAsync().and_then(|op| op.get()),
         "prev" => session.TrySkipPreviousAsync().and_then(|op| op.get()),
-        _ => return,
+        // TimeSpan is in 100ns ticks.
+        _ => match action.strip_prefix("seek:").and_then(|ms| ms.parse::<i64>().ok()) {
+            Some(ms) => session
+                .TryChangePlaybackPositionAsync(ms * 10_000)
+                .and_then(|op| op.get()),
+            None => return,
+        },
     };
     if let Err(e) = result {
         eprintln!("control '{action}' failed: {e}");
