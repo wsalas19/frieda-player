@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { artTheme, FALLBACK_THEME, type ArtTheme } from "./theme";
 
 interface MediaState {
   available: boolean;
@@ -55,6 +56,7 @@ export default function App() {
   // Artwork lives in its own event/state so fat base64 payloads never ride
   // along with lightweight position/metadata ticks.
   const [art, setArt] = useState<string | null>(null);
+  const [theme, setTheme] = useState<ArtTheme>(FALLBACK_THEME);
   const [toast, setToast] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pendingTimer = useRef<number | null>(null);
@@ -104,6 +106,21 @@ export default function App() {
     };
   }, []);
 
+  // Re-grade the card whenever the artwork changes.
+  useEffect(() => {
+    if (!art) {
+      setTheme(FALLBACK_THEME);
+      return;
+    }
+    let alive = true;
+    artTheme(art).then((t) => {
+      if (alive) setTheme(t);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [art]);
+
   const send = (action: string) => {
     setPending(true);
     if (pendingTimer.current) window.clearTimeout(pendingTimer.current);
@@ -136,7 +153,8 @@ export default function App() {
   return (
     <div
       data-tauri-drag-region
-      className="group relative flex h-screen w-screen items-stretch rounded-2xl border border-white/10 bg-neutral-900/80 text-white shadow-2xl backdrop-blur-xl"
+      className="group relative flex h-screen w-screen items-stretch rounded-2xl border border-white/10 bg-neutral-900/80 text-white shadow-2xl backdrop-blur-xl transition-colors duration-500"
+      style={theme.background ? { background: theme.background } : undefined}
     >
       {/* Artwork */}
       <div data-tauri-drag-region className="m-2 h-[calc(100%-1rem)] shrink-0">
@@ -170,12 +188,16 @@ export default function App() {
             <div data-tauri-drag-region className="truncate text-xs text-white/60">
               {[state.artist, state.album].filter(Boolean).join(" · ") || "—"}
             </div>
-            <div data-tauri-drag-region className="mt-1 flex items-center gap-2 text-[10px] tabular-nums text-white/50">
+            <div
+              data-tauri-drag-region
+              className="mt-1 flex items-center gap-2 text-[10px] tabular-nums text-white/50"
+              style={theme.accent ? { color: theme.accent } : undefined}
+            >
               <span>{fmt(position)}</span>
               <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/15">
                 <div
                   className="h-full rounded-full bg-white/80 transition-[width] duration-200"
-                  style={{ width: `${pct}%` }}
+                  style={{ width: `${pct}%`, background: theme.accent || undefined }}
                 />
               </div>
               <span>{fmt(state.duration_ms)}</span>
@@ -224,7 +246,10 @@ export default function App() {
             className="pointer-events-auto absolute inset-x-4 bottom-3 flex h-3 cursor-pointer items-center"
           >
             <div className="h-1 w-full overflow-hidden rounded-full bg-white/25">
-              <div className="h-full rounded-full bg-white" style={{ width: `${pct}%` }} />
+              <div
+                className="h-full rounded-full bg-white"
+                style={{ width: `${pct}%`, background: theme.accent || undefined }}
+              />
             </div>
           </div>
         </div>

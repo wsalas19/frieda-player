@@ -34,6 +34,11 @@ touches audio itself.
 - **Frameless floating card** — transparent, draggable, always-on-top by default
 - **Live metadata** — artwork, title, artist · album, and a smoothly animated
   progress bar
+- **Color grading** — the card tints itself to the artwork: the dominant color
+  is extracted on a tiny canvas and blended into the frosted background, with
+  the accent color (progress bar, timestamps) adjusted until it passes
+  [WCAG](https://www.w3.org/TR/WCAG22/) contrast (≥ 4.5:1) against the card.
+  No dependencies — just canvas math (`src/theme.ts`)
 - **Hover controls** — previous / play-pause / next with instant feedback
   (optimistic UI + pending spinner), plus a click-to-seek bar that appears
   along the bottom edge on hover
