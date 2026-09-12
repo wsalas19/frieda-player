@@ -40,7 +40,7 @@ pub fn run() {
             let autostart = autostart.clone();
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Media Widget")
+                .tooltip("Frieda Player")
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "show" => {

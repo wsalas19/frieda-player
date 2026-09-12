@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎵 Media Widget
+# 🎵 Frieda Player
 
 **A featherweight, floating now-playing widget for Windows.**
 
@@ -11,7 +11,7 @@ Native SMTC integration · Rust + Tauri 2 · no Electron, no bloat
 [![Platform](https://img.shields.io/badge/Platform-Windows-informational.svg)](#roadmap)
 
 <!-- TODO: add a screenshot at docs/screenshot.png once you're happy with the look
-<img src="docs/screenshot.png" width="420" alt="Media Widget floating over the desktop"> -->
+<img src="docs/screenshot.png" width="420" alt="Frieda Player floating over the desktop"> -->
 
 </div>
 
@@ -19,7 +19,7 @@ Native SMTC integration · Rust + Tauri 2 · no Electron, no bloat
 
 ## What is this?
 
-Media Widget is a small frameless card that lives on your desktop and mirrors
+Frieda Player is a small frameless card that lives on your desktop and mirrors
 whatever is playing through the Windows System Media Transport Controls
 (SMTC) — the same feed behind the Windows media flyout. If your player
 integrates with Windows' native media keys, the widget can see and control it:
@@ -44,9 +44,9 @@ touches audio itself.
   along the bottom edge on hover
 - **System tray resident** — right-click for Show/Hide, Always on Top,
   Run at Startup, Check for Updates, and Quit
-- **Sips resources** — the backend polls SMTC at 1 Hz while playing and
-  throttles to every 5 s when idle; state is only sent to the UI when it
-  actually changes, and the progress bar interpolates locally between ticks
+- **Sips resources** — fully event-driven (zero polling; SMTC change events
+  wake the backend instantly), state is only sent to the UI when it actually
+  changes, and the progress bar interpolates locally between ticks
 - **Truly native read path** — Windows.Media.Control via the `windows` crate,
   no polling of window titles or media key hooks
 
@@ -55,8 +55,8 @@ touches audio itself.
 Grab the latest installer from [Releases](https://github.com/wsalas19/wmp-project/releases)
 (once published — this repo is in private development for now):
 
-- `Media Widget_x.y.z_x64-setup.exe` (NSIS, recommended)
-- `Media Widget_x.y.z_x64_en-US.msi`
+- `Frieda Player_x.y.z_x64-setup.exe` (NSIS, recommended)
+- `Frieda Player_x.y.z_x64_en-US.msi`
 
 Or build from source (below).
 
@@ -82,6 +82,9 @@ Or build from source (below).
 | SMTC event loop, artwork decoding, transport controls | `src-tauri/src/media.rs` |
 | Tray menu, autostart, window management | `src-tauri/src/lib.rs` |
 | Widget UI (drag region, controls, progress) | `src/App.tsx` |
+
+> 📐 Full technical documentation — architecture, IPC contract, the artwork
+> state machine, and pitfalls — lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 The IPC surface is three messages: a `media-state` event (backend → frontend,
 lightweight metadata/timeline JSON), a `media-art` event (backend → frontend,

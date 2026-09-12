@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Media Widget",
+  "productName": "Frieda Player",
   "version": "0.1.0",
   "identifier": "com.wmp.widget",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Media Widget",
+        "title": "Frieda Player",
         "width": 400,
         "height": 120,
         "decorations": false,

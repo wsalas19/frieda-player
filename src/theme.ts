@@ -93,6 +93,6 @@ export async function artTheme(art: string): Promise<ArtTheme> {
 	if (contrast(luminance(accent), bgL) < 4.5) accent = WHITE;
 
 	// 0.8 alpha matches the old bg-neutral-900/80 frosted look.
-	const bgCss = `rgba(${bg.map(Math.round).join(" ")}, 0.85)`;
+	const bgCss = `rgba(${bg.map(Math.round).join(" ")})`;
 	return { background: bgCss, accent: css(accent) };
 }
