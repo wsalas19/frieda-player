@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🎵 Frieda Player
+<img src="docs/logo.png" width="110" alt="Frieda Player logo">
+
+# Frieda Player
 
 **A featherweight, floating now-playing widget for Windows.**
 
@@ -10,8 +12,20 @@ Native SMTC integration · Rust + Tauri 2 · no Electron, no bloat
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-orange.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Platform-Windows-informational.svg)](#roadmap)
 
-<!-- TODO: add a screenshot at docs/screenshot.png once you're happy with the look
-<img src="docs/screenshot.png" width="420" alt="Frieda Player floating over the desktop"> -->
+<img src="docs/screenshot-playing.png" width="420" alt="Frieda Player mirroring a playing track, color-graded to the album artwork">
+<br>
+<em>Color-graded to the album artwork — artwork, metadata, animated progress.</em>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshot-hovered.png" width="400" alt="Hover controls: previous, play-pause, next, and a click-to-seek bar"></td>
+    <td width="50%"><img src="docs/screenshot-empty.png" width="400" alt="Empty state when no media is playing"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Hover controls + click-to-seek</em></td>
+    <td align="center"><em>Empty state</em></td>
+  </tr>
+</table>
 
 </div>
 
