@@ -128,6 +128,16 @@ fn backend_loop(app: AppHandle) {
             bound = current.clone();
         }
 
+        if current.is_none() {
+            // Session ended: clear art so the empty state isn't wearing the
+            // last track's artwork/colorway. Resetting last_art_key forces a
+            // fresh read when a new session appears.
+            art = None;
+            last_art_key = None;
+            prev_art = None;
+            stale_reads = 0;
+        }
+
         if let Some(session) = &current {
             let props = session
                 .TryGetMediaPropertiesAsync()
