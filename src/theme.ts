@@ -46,15 +46,16 @@ interface Buckets {
 // and interior pixels into 12-bit color buckets ((r>>4)<<8 | (g>>4)<<4 | b>>4),
 // returning each group's average colors sorted by pixel count.
 async function extract(src: string): Promise<Buckets> {
-	const blob = await (await fetch(src)).blob();
-	const bmp = await createImageBitmap(blob, {
-		resizeWidth: SIZE,
-		resizeHeight: SIZE,
-	});
+	// <img> + decode(), not fetch(): data: URLs are allowed by CSP for images
+	// but fetch() on them would need a connect-src grant. decode() decodes
+	// off the main thread; the 32x32 draw is negligible.
+	const img = new Image();
+	img.src = src;
+	await img.decode();
 	const canvas = new OffscreenCanvas(SIZE, SIZE);
 	const ctx = canvas.getContext("2d", { willReadFrequently: true });
 	if (!ctx) throw new Error("no 2d context");
-	ctx.drawImage(bmp, 0, 0);
+	ctx.drawImage(img, 0, 0, SIZE, SIZE);
 	const d = ctx.getImageData(0, 0, SIZE, SIZE).data;
 
 	interface Tally {
