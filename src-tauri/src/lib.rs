@@ -1,10 +1,40 @@
 mod media;
 
+use std::sync::Mutex;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, Submenu},
     tray::TrayIconBuilder,
-    Manager,
+    AppHandle, Manager,
 };
+
+// Dynamic-theme preference: one boolean, persisted as a tiny JSON file so the
+// tray checkbox and the frontend agree across restarts. ponytail: std::fs
+// instead of tauri-plugin-store; swap if real settings accumulate.
+static THEME_ENABLED: Mutex<bool> = Mutex::new(true);
+
+fn settings_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    Some(app.path().app_data_dir().ok()?.join("settings.json"))
+}
+
+fn load_theme_pref(app: &AppHandle) -> bool {
+    std::fs::read_to_string(settings_path(app).unwrap_or_default())
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("enable_theme").and_then(|b| b.as_bool()))
+        .unwrap_or(true)
+}
+
+fn save_theme_pref(app: &AppHandle, enabled: bool) {
+    if let Some(path) = settings_path(app) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(
+            path,
+            serde_json::json!({ "enable_theme": enabled }).to_string(),
+        );
+    }
+}
 
 #[tauri::command]
 fn control(action: String) {
@@ -16,6 +46,11 @@ fn get_state() -> Option<media::Snapshot> {
     media::current_state()
 }
 
+#[tauri::command]
+fn get_theme_pref() -> bool {
+    *THEME_ENABLED.lock().unwrap()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -23,20 +58,25 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .invoke_handler(tauri::generate_handler![control, get_state])
+        .invoke_handler(tauri::generate_handler![control, get_state, get_theme_pref])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Show / Hide Widget", true, None::<&str>)?;
             let on_top = CheckMenuItem::with_id(app, "on_top", "Always on Top", true, true, None::<&str>)?;
             let autostart = CheckMenuItem::with_id(app, "autostart", "Run at Startup", true, false, None::<&str>)?;
+            let theme_on = load_theme_pref(app.handle());
+            *THEME_ENABLED.lock().unwrap() = theme_on;
+            let dynamic_theme = CheckMenuItem::with_id(app, "dynamic_theme", "Dynamic Theme", true, theme_on, None::<&str>)?;
             let updates = MenuItem::with_id(app, "updates", "Check for Updates", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let settings = Submenu::with_id(app, "settings", "Settings", true)?;
             settings.append(&on_top)?;
             settings.append(&autostart)?;
+            settings.append(&dynamic_theme)?;
             let menu = Menu::with_items(app, &[&show, &settings, &updates, &quit])?;
 
             let on_top = on_top.clone();
             let autostart = autostart.clone();
+            let dynamic_theme = dynamic_theme.clone();
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Frieda Player")
@@ -65,6 +105,13 @@ pub fn run() {
                         } else {
                             let _ = mgr.disable();
                         }
+                    }
+                    "dynamic_theme" => {
+                        let enabled = dynamic_theme.is_checked().unwrap_or(true);
+                        *THEME_ENABLED.lock().unwrap() = enabled;
+                        save_theme_pref(app, enabled);
+                        use tauri::Emitter;
+                        let _ = app.emit("theme-preference", enabled);
                     }
                     "updates" => {
                         use tauri::Emitter;

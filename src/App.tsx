@@ -57,6 +57,8 @@ export default function App() {
   // along with lightweight position/metadata ticks.
   const [art, setArt] = useState<string | null>(null);
   const [theme, setTheme] = useState<ArtTheme>(FALLBACK_THEME);
+  // Tray-controlled "Dynamic Theme" setting; backend persists it.
+  const [enableTheme, setEnableTheme] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pendingTimer = useRef<number | null>(null);
@@ -83,6 +85,10 @@ export default function App() {
       }
     });
     const unArt = listen<string | null>("media-art", (e) => setArt(e.payload));
+    const unThemePref = listen<boolean>("theme-preference", (e) =>
+      setEnableTheme(e.payload),
+    );
+    invoke<boolean>("get_theme_pref").then(setEnableTheme).catch(() => {});
     const un = listen<MediaState>("media-state", (e) => {
       const s = e.payload;
       lastRef.current = { at: Date.now(), position_ms: s.position_ms, playing: s.playing };
@@ -101,14 +107,16 @@ export default function App() {
     return () => {
       un.then((f) => f());
       unArt.then((f) => f());
+      unThemePref.then((f) => f());
       unUpdates.then((f) => f());
       clearInterval(timer);
     };
   }, []);
 
-  // Re-grade the card whenever the artwork changes.
+  // Re-grade the card whenever the artwork changes — unless the tray setting
+  // turns the dynamic theme off, which pins the neutral look.
   useEffect(() => {
-    if (!art) {
+    if (!art || !enableTheme) {
       setTheme(FALLBACK_THEME);
       return;
     }
@@ -119,7 +127,7 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [art]);
+  }, [art, enableTheme]);
 
   const send = (action: string) => {
     setPending(true);
