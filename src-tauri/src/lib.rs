@@ -17,11 +17,24 @@ fn settings_path(app: &AppHandle) -> Option<std::path::PathBuf> {
 }
 
 fn load_theme_pref(app: &AppHandle) -> bool {
-    std::fs::read_to_string(settings_path(app).unwrap_or_default())
+    let Some(path) = settings_path(app) else {
+        return true;
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return true; // missing: default; written on first toggle
+    };
+    match serde_json::from_str::<serde_json::Value>(&content)
         .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v.get("enable_theme").and_then(|b| b.as_bool()))
-        .unwrap_or(true)
+    {
+        Some(enabled) => enabled,
+        None => {
+            // Corrupted: self-heal by overwriting with the default config.
+            eprintln!("[wmp] settings.json corrupted; resetting to defaults");
+            save_theme_pref(app, true);
+            true
+        }
+    }
 }
 
 fn save_theme_pref(app: &AppHandle, enabled: bool) {
@@ -58,6 +71,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![control, get_state, get_theme_pref])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Show / Hide Widget", true, None::<&str>)?;
@@ -114,8 +128,37 @@ pub fn run() {
                         let _ = app.emit("theme-preference", enabled);
                     }
                     "updates" => {
-                        use tauri::Emitter;
-                        let _ = app.emit("check-updates", ());
+                        // Real updater check: emit Some(version) when an update
+                        // exists (and install + restart), None when current.
+                        let a = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            use tauri::Emitter;
+                            use tauri_plugin_updater::UpdaterExt;
+                            let updater = match a.updater() {
+                                Ok(u) => u,
+                                Err(e) => {
+                                    eprintln!("[wmp] updater unavailable: {e}");
+                                    return;
+                                }
+                            };
+                            match updater.check().await {
+                                Ok(Some(update)) => {
+                                    let ver = update.version.clone();
+                                    let _ = a.emit("check-updates", Some(ver));
+                                    if let Err(e) =
+                                        update.download_and_install(|_, _| {}, || {}).await
+                                    {
+                                        eprintln!("[wmp] update install failed: {e}");
+                                        return;
+                                    }
+                                    a.restart();
+                                }
+                                Ok(None) => {
+                                    let _ = a.emit("check-updates", None::<String>);
+                                }
+                                Err(e) => eprintln!("[wmp] update check failed: {e}"),
+                            }
+                        });
                     }
                     "quit" => app.exit(0),
                     _ => {}

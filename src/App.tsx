@@ -96,9 +96,13 @@ export default function App() {
       setState(s);
       setPending(false);
     });
-    const unUpdates = listen("check-updates", () => {
-      setToast("You are on the latest version. (0.1.0)");
-      setTimeout(() => setToast(null), 3000);
+    const unUpdates = listen<string | null>("check-updates", (e) => {
+      setToast(
+        e.payload
+          ? `Downloading update v${e.payload} — the app will restart.`
+          : "You are on the latest version.",
+      );
+      setTimeout(() => setToast(null), 5000);
     });
     const timer = setInterval(() => {
       const { at, position_ms, playing } = lastRef.current;

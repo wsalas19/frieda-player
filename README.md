@@ -147,7 +147,8 @@ npm run tauri build
 ## Roadmap
 
 - [x] Windows SMTC backend (metadata, artwork, controls, tray, autostart)
-- [ ] Packaging polish: custom app/tray icon, code signing, auto-update channel
+- [x] Packaging polish: custom app/tray icon, signed auto-update channel
+- [ ] Authenticode code signing (removes SmartScreen warnings on install)
 - [ ] **Phase 2 — Linux:** swap the media backend for MPRIS behind the existing
       `#[cfg(target_os)]` seam (`src-tauri/src/media.rs`), WebKitGTK frontend,
       `.AppImage`/`.deb` artifacts

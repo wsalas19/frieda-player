@@ -9,6 +9,7 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-always-on-top",
+    "updater:default",
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled"

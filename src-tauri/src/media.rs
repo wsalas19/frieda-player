@@ -74,22 +74,29 @@ fn backend_loop(app: AppHandle) {
     let (tx, rx) = mpsc::channel::<Msg>();
     *CONTROL_TX.lock().unwrap() = Some(tx.clone());
 
-    // RequestAsync can fail right after login; retry until it succeeds.
-    let manager = loop {
-        match SessionManager::RequestAsync() {
-            Ok(op) => match op.get() {
+    // RequestAsync can fail right after login; retry fast a few times, then
+    // slow-retry so a disabled SMTC service costs one wake per 30s instead of
+    // spinning. The UI shows its empty state the whole time.
+    let manager = {
+        let mut tries: u32 = 0;
+        loop {
+            match SessionManager::RequestAsync().and_then(|op| op.get()) {
                 Ok(m) => {
                     eprintln!("[wmp] SMTC manager acquired");
                     break m;
                 }
                 Err(e) => {
-                    eprintln!("[wmp] RequestAsync get failed: {e}");
-                    std::thread::sleep(Duration::from_secs(2));
+                    tries += 1;
+                    if tries <= 5 {
+                        eprintln!("[wmp] SMTC unavailable ({e}); retry {tries}/5 in 2s");
+                        std::thread::sleep(Duration::from_secs(2));
+                    } else {
+                        if tries == 6 {
+                            eprintln!("[wmp] SMTC still unavailable; retrying every 30s");
+                        }
+                        std::thread::sleep(Duration::from_secs(30));
+                    }
                 }
-            },
-            Err(e) => {
-                eprintln!("[wmp] RequestAsync failed: {e}");
-                std::thread::sleep(Duration::from_secs(2));
             }
         }
     };
