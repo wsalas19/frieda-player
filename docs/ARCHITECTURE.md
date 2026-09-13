@@ -35,11 +35,13 @@ back to it.
 | Shell / windowing / IPC | Tauri 2 (Rust host + system webview) |
 | Media backend | Rust, `windows` crate 0.61 (WinRT, `Media_Control`) |
 | UI | React + TypeScript, Tailwind CSS |
-| Bundle | NSIS / MSI via Tauri bundler |
+| Settings | Tiny JSON file in the app data dir (`std::fs`, no plugin) |
+| Updates | `tauri-plugin-updater`, signed, fed by GitHub Releases |
+| Bundle | NSIS / MSI via Tauri bundler, CI-built on version tags |
 
 Two processes matter: the **Rust host** (`src-tauri/`) which owns the window,
-tray and SMTC connection, and the **webview** (`src/`) which renders the card.
-They communicate over Tauri's IPC (see §4).
+tray, SMTC connection and updater, and the **webview** (`src/`) which renders
+the card. They communicate over Tauri's IPC (see §4).
 
 ---
 
@@ -48,15 +50,18 @@ They communicate over Tauri's IPC (see §4).
 ```
 src-tauri/
   src/
-    lib.rs      # Tauri setup: tray menu, autostart, window mgmt, command registry
+    lib.rs      # Tauri setup: tray menu, autostart, settings persistence,
+                # updater wiring, command registry
     media.rs    # The entire media backend (the interesting file)
     main.rs     # Entry point, calls lib::run()
-  tauri.conf.json  # Window config, bundle config, icon manifest
+  tauri.conf.json  # Window config, bundle config, updater endpoint + pubkey
+  capabilities/    # Webview permission grants (CSP lives in tauri.conf.json)
   icons/           # Generated icon set (npm run tauri icon <png>)
 src/
-  App.tsx       # The whole UI: card, progress, controls
+  App.tsx       # The whole UI: card, progress, controls, toasts
   theme.ts      # Artwork-driven color grading + WCAG contrast math
-docs/           # This documentation, icon sources
+docs/           # This documentation, logo, screenshots
+.github/workflows/release.yml   # Builds installers on v* tags (tauri-action)
 ```
 
 If you are porting to another OS, `media.rs` is the only file you touch — it
@@ -79,6 +84,10 @@ and stubbed).
   the thread doesn't run.
 - WinRT calls through `windows` 0.61 are memory-safe; the only `unsafe` in the
   codebase is the single `RoInitialize` call.
+- **Manager acquisition is resilient**: `RequestAsync()` is retried 5× at 2s
+  (the "right after login" race), then drops to a 30s slow-retry forever. If
+  the SMTC service is disabled, the app launches into its empty state and
+  keeps quietly trying — one wake per 30s, no hang.
 
 ### 3.2 Architecture: one thread, one channel, event-driven
 
@@ -93,7 +102,8 @@ enum Msg {
 ```
 
 Producers of `Msg::Refresh`:
-- `manager.CurrentSessionChanged` — the active media app changed
+- `manager.CurrentSessionChanged` — the active media app changed (also fires
+  when the last session *ends*)
 - `session.MediaPropertiesChanged` — track metadata changed
 - `session.PlaybackInfoChanged` — play/pause state changed
 - `session.TimelinePropertiesChanged` — position/seek happened
@@ -110,13 +120,15 @@ Loop iteration, in order:
 1. Re-fetch `GetCurrentSession()`. If the session identity changed (compared
    by raw `IUnknown` pointer via `session_key()`), rebind the three session
    event handlers to the new session.
-2. Read the session's media properties (title/artist/album),
+2. **No session at all** → clear the artwork state machine (art emits `null`,
+   keys reset) so the empty state doesn't wear the last track's colorway.
+3. Read the session's media properties (title/artist/album),
    playback info (playing flag) and timeline (position/duration).
-3. Run the artwork state machine (§3.4).
-4. **Diff against last emitted state** and emit only what changed:
+4. Run the artwork state machine (§3.4).
+5. **Diff against last emitted state** and emit only what changed:
    - `media-state` — lightweight metadata/timeline JSON
    - `media-art` — the artwork data URL, only when the bytes changed
-5. Block on the channel again.
+6. Block on the channel again.
 
 The diffing matters: position ticks arrive often, artwork is large, and
 nothing should travel over IPC unless it changed (see §6, pitfalls).
@@ -181,7 +193,8 @@ base64 `data:` URL.
 
 ## 4. IPC contract (backend ↔ UI)
 
-Three messages. This is the entire surface — keeping it small is deliberate.
+The core surface is three messages; settings and updates add small ones on
+top. Keeping each message small and diffed is deliberate (see §6).
 
 ### `media-state` — Tauri event, backend → UI
 
@@ -200,9 +213,9 @@ position re-syncs must not drag megabytes with them.
 ### `media-art` — Tauri event, backend → UI
 
 `string | null` — a base64 `data:image/png;base64,…` / JPEG URL, or `null`
-when the artwork cleared (track change) or is unavailable. Emitted **only**
-when the bytes change, so a track that keeps its album art causes zero
-traffic.
+when the artwork cleared (track change, session ended) or is unavailable.
+Emitted **only** when the bytes change, so a track that keeps its album art
+causes zero traffic.
 
 ### `control` — Tauri command, UI → backend
 
@@ -217,6 +230,38 @@ snapshot. The UI calls it once on mount: the backend may have emitted state
 before the webview's listener existed (startup with a paused Tidal open), and
 events are not replayed.
 
+### Dynamic Theme — preference sync
+
+- `get_theme_pref` — command, UI → backend. Returns the persisted boolean;
+  called once on mount.
+- `theme-preference` — event, backend → UI (payload `boolean`). Emitted when
+  the tray toggle flips. The UI bypasses color grading when false.
+
+Persistence lives in `lib.rs`, deliberately not `tauri-plugin-store`: one
+boolean, stored as `{"enable_theme": bool}` in `settings.json` in the app
+data dir via `std::fs`. A corrupted file is logged and self-healed to
+defaults on next read. Single source of truth is the Rust side — the UI never
+reads the file.
+
+### Update checks — `tauri-plugin-updater`
+
+Tray **Check for Updates** → async task checks the configured endpoint
+(`releases/latest/download/latest.json` on this repo) →
+
+- update available: emit `check-updates` with the new version (UI toasts
+  "Downloading…"), then `download_and_install` and restart the app;
+- current: emit `check-updates` with `null` (UI toasts "latest version");
+- check failed: emit `check-updates-error` (UI toasts an apology) and log.
+
+Artifacts are signed at build time (`createUpdaterArtifacts: true`, minisign
+keypair; the public key lives in `tauri.conf.json`, the private key only in
+CI secrets). Two release rules keep this working:
+
+1. **Never publish with the "prerelease" box checked** — GitHub's
+   `/releases/latest/` URL excludes prereleases, so the endpoint 404s.
+2. **Never reuse a version/tag** — installed apps compare versions, not
+   commits.
+
 ---
 
 ## 5. The frontend (`src/`)
@@ -227,8 +272,10 @@ Single component. Responsibilities:
 
 - Renders the card: artwork, title/artist·album, progress bar, hover controls
   (prev / play-pause / next) and a click-to-seek bar that appears along the
-  bottom edge on hover.
-- Subscribes to `media-state` and `media-art`; calls `get_state` on mount.
+  bottom edge on hover; version tag; toast pop-up.
+- Subscribes to `media-state` and `media-art`; calls `get_state` on mount;
+  follows the Dynamic Theme preference (`get_theme_pref` +
+  `theme-preference`) and update-check toasts.
 - **Optimistic UI**: play/pause flips its icon and seek jumps the bar
   immediately, before the backend confirms. The next backend event
   reconciles. A 2s timer un-sticks the pending spinner if no event arrives.
@@ -242,20 +289,41 @@ bar, so the card stays draggable *through* the overlay.
 
 ### 5.2 `theme.ts` — artwork color grading
 
-On every artwork change, the UI re-grades the card:
+On every artwork change (and only if the Dynamic Theme setting is on), the UI
+re-grades the card, after Panic's iTunes 11 algorithm
+([blog post](https://blog.panic.com/itunes-11-and-colors/),
+[ColorArt](https://github.com/panicinc/ColorArt)):
 
-1. **Extract**: draw the artwork to a 16×16 canvas, average the opaque
-   pixels. Data-URL images don't taint the canvas, so this is pure frontend.
-2. **Background**: neutral-900 tinted with ~12% of the extracted color,
-   darkened until white text keeps ≥ 4.5:1 WCAG contrast (relative luminance
-   capped at `1.05/4.5 − 0.05`). Emitted at 0.85 alpha to keep the frosted
-   transparency over the desktop.
-3. **Accent**: the art color, iteratively mixed toward white until it hits
-   4.5:1 against the computed background (also satisfies the 3:1 non-text
-   minimum for the progress bar); white fallback when unreachable.
+1. **Extract**: load the artwork via `<img>.decode()` (CSP allows `data:` for
+   images; `fetch()` on them would need a `connect-src` grant — using fetch
+   here is what once silently disabled grading in packaged builds), draw to a
+   64×64 canvas, and tally perimeter and interior pixels into 12-bit color
+   buckets (`r>>4, g>>4, b>>4`). 64×64 (not 32) so thin features — album-title
+   script text, a small vivid logo — survive downsampling.
+2. **Background tint**: the dominant *perimeter* bucket is the frame color —
+   unless it's colorless (black bars love winning the edge vote), in which
+   case the most prominent chromatic edge bucket (≥ `EDGE_SHARE` of edge
+   pixels, chroma ≥ `CHROMA_NEUTRAL`) tints instead; with no chromatic edge
+   at all the card stays deliberately neutral. Weak tints (muted blues,
+   dusty reds) are saturation-boosted — channel spread expanded around the
+   midpoint to `CHROMA_TINT_TARGET` — before being blended 40% into
+   neutral-900, then darkened until white text keeps ≥ 4.5:1 WCAG contrast
+   (relative luminance capped at `1.05/4.5 − 0.05`). Emitted at 0.85 alpha
+   to keep the frosted transparency over the desktop.
+3. **Accent**: rank ALL interior buckets by `count × chroma^4`, take the
+   winner, then lighten it toward white in hue-preserving steps until it
+   passes 4.5:1 against the card. Ranking *before* contrast-filtering is
+   load-bearing: against a near-black card, mid-luminance vivid colors fail
+   4.5:1 while pale grays pass, so filtering first deletes exactly the colors
+   worth showing. If the winning bucket is itself colorless (true B&W cover),
+   fall back to the most common passing bucket. White as last resort.
 
 All WCAG math is ~15 lines of plain functions (`luminance`, `contrast`,
-`mix`). No dependency. Failure of any step falls back to the neutral theme.
+`mix`); `chroma` is the max−min RGB spread. No dependency. The tuning knobs
+(`CHROMA_NEUTRAL`, `EDGE_SHARE`, `CHROMA_TINT_TARGET`, the exponent, `SIZE`)
+are constants at the top of the file with a `ponytail:` note — calibration
+history lives in the git log. Failure of any step falls back to the neutral
+theme.
 
 ---
 
@@ -272,26 +340,44 @@ All WCAG math is ~15 lines of plain functions (`luminance`, `contrast`,
   that's exactly how one-track-lag looks.
 - **Session identity ≠ session object.** Rebind event handlers when the raw
   pointer (`session_key`) changes; the manager's "current session" is what
-  you mirror, not a session you picked once.
+  you mirror, not a session you picked once. And when the session *ends*,
+  clear the art — otherwise the empty state wears the last track's colorway.
 - **Emit on diff only.** Every unchanged emit is webview work for nothing;
   every changed emit should be as small as the change is.
+- **CSP applies to `fetch()`, not `<img>`.** Grading silently died in
+  packaged builds because `fetch("data:…")` needed a `connect-src` grant the
+  CSP (rightly) didn't give. Load images via `<img>.decode()` instead of
+  loosening the policy. Corollary: a `catch(() => {})` can hide a
+  permissions problem — check the packaged build, not just dev.
+- **Config changes don't hot-reload.** `tauri.conf.json` (CSP, window
+  config) only applies on a full `tauri dev` restart. Dev/build
+  discrepancies are usually a stale dev session, not a build bug.
+- **GitHub `/releases/latest/` skips prereleases.** The updater endpoint
+  404s for anything published with the prerelease box checked — publish
+  betas as full releases with a `beta` tag instead.
 
 ---
 
-## 7. Building and debugging
+## 7. Building, releasing, debugging
 
 ```bash
 npm install         # frontend deps
-npm run tauri dev   # dev session with hot reload
-npm run tauri build # installers in src-tauri/target/release/bundle/
+npm run tauri dev   # dev session with hot reload (restart for conf changes!)
+npm run tauri build # local installers in src-tauri/target/release/bundle/
 npm run tauri icon <1024px.png>   # regenerate src-tauri/icons/
 ```
 
+**Releasing** is tag-driven: bump the version in `tauri.conf.json` +
+`Cargo.toml` (numeric only — WiX rejects semver prerelease segments; put
+"beta" in the tag), commit, `git tag vX.Y.Z && git push --tags`. CI
+(`tauri-action`) builds NSIS + MSI + signed updater artifacts into a **draft**
+release; review, add notes, publish with the prerelease box unchecked (§4).
+
 Debugging: the backend logs to stderr — visible in the terminal running
 `tauri dev`. Genuine error paths (SMTC manager acquisition, event binding,
-control failures) log with a `[wmp]` prefix; temporary debug logging in the
-artwork machine has historically used `[wmp:art]` / `[wmp:emit]` and been
-stripped once fixes were confirmed.
+control failures, update checks, settings corruption) log with a `[wmp]`
+prefix; temporary debug logging in the artwork machine has historically used
+`[wmp:art]` / `[wmp:emit]` and been stripped once fixes were confirmed.
 
 Windows only today; the `#[cfg(target_os = "linux")]` stub in `media.rs`
 marks the MPRIS port's landing zone.

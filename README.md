@@ -48,16 +48,20 @@ touches audio itself.
 - **Frameless floating card** — transparent, draggable, always-on-top by default
 - **Live metadata** — artwork, title, artist · album, and a smoothly animated
   progress bar
-- **Color grading** — the card tints itself to the artwork: the dominant color
-  is extracted on a tiny canvas and blended into the frosted background, with
-  the accent color (progress bar, timestamps) adjusted until it passes
+- **Color grading** — the card tints itself to the artwork. Inspired by
+  Panic's iTunes 11 algorithm ([blog post](https://blog.panic.com/itunes-11-and-colors/),
+  [ColorArt](https://github.com/panicinc/ColorArt)): perimeter sampling picks
+  the frame color for the frosted background, interior buckets are ranked by
+  prevalence × colorfulness for the accent (progress bar, timestamps), muted
+  colors are saturation-boosted, and the accent is adjusted until it passes
   [WCAG](https://www.w3.org/TR/WCAG22/) contrast (≥ 4.5:1) against the card.
-  No dependencies — just canvas math (`src/theme.ts`)
+  Truly monochrome covers stay neutral. Toggle it in the tray (**Dynamic
+  Theme**). No dependencies — just canvas math (`src/theme.ts`)
 - **Hover controls** — previous / play-pause / next with instant feedback
   (optimistic UI + pending spinner), plus a click-to-seek bar that appears
   along the bottom edge on hover
 - **System tray resident** — right-click for Show/Hide, Always on Top,
-  Run at Startup, Check for Updates, and Quit
+  Run at Startup, Dynamic Theme, Check for Updates, and Quit
 - **Sips resources** — fully event-driven (zero polling; SMTC change events
   wake the backend instantly), state is only sent to the UI when it actually
   changes, and the progress bar interpolates locally between ticks
@@ -66,11 +70,14 @@ touches audio itself.
 
 ## Install
 
-Grab the latest installer from [Releases](https://github.com/wsalas19/frieda-player/releases)
-(once published — this repo is in private development for now):
+Grab the latest installer from [Releases](https://github.com/wsalas19/frieda-player/releases):
 
-- `Frieda Player_x.y.z_x64-setup.exe` (NSIS, recommended)
-- `Frieda Player_x.y.z_x64_en-US.msi`
+- `Frieda.Player_0.2.0_x64-setup.exe` (NSIS, recommended)
+- `Frieda.Player_0.2.0_x64_en-US.msi`
+
+The app updates itself: new releases are picked up through the tray menu's
+**Check for Updates**. Windows Defender SmartScreen may warn about an unsigned
+beta installer — expected until Authenticode signing lands (see roadmap).
 
 Or build from source (below).
 
@@ -100,11 +107,13 @@ Or build from source (below).
 > 📐 Full technical documentation — architecture, IPC contract, the artwork
 > state machine, and pitfalls — lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-The IPC surface is three messages: a `media-state` event (backend → frontend,
-lightweight metadata/timeline JSON), a `media-art` event (backend → frontend,
-fired only when the artwork bytes change, so the base64 payload never rides
-along with position ticks), and a `control` command (frontend → backend,
-`play_pause | next | prev | seek:<ms>`).
+The core IPC surface is three messages: a `media-state` event (backend →
+frontend, lightweight metadata/timeline JSON), a `media-art` event (backend →
+frontend, fired only when the artwork bytes change, so the base64 payload
+never rides along with position ticks), and a `control` command (frontend →
+backend, `play_pause | next | prev | seek:<ms>`). A few smaller messages
+handle startup state sync, the Dynamic Theme preference, and update checks —
+see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 A few implementation notes worth knowing if you're hacking on it:
 
@@ -148,16 +157,19 @@ npm run tauri build
 
 - [x] Windows SMTC backend (metadata, artwork, controls, tray, autostart)
 - [x] Packaging polish: custom app/tray icon, signed auto-update channel
+- [x] CI: Windows installers + updater artifacts built on tag
+      (`.github/workflows/release.yml`)
 - [ ] Authenticode code signing (removes SmartScreen warnings on install)
 - [ ] **Phase 2 — Linux:** swap the media backend for MPRIS behind the existing
       `#[cfg(target_os)]` seam (`src-tauri/src/media.rs`), WebKitGTK frontend,
-      `.AppImage`/`.deb` artifacts
-- [ ] CI to build Windows + Linux artifacts on tag
+      `.AppImage`/`.deb` artifacts, CI for Linux artifacts on tag
 
 ## Contributing
 
-Issues and PRs are welcome once the repo goes public. Keep the backend seam
-(`media.rs`) OS-conditional — that's what keeps the Linux port cheap.
+Issues and PRs are welcome — this is an early beta, so crash logs, artwork
+quirks, and player-compatibility reports are especially useful. Keep the
+backend seam (`media.rs`) OS-conditional — that's what keeps the Linux port
+cheap.
 
 ## License
 
