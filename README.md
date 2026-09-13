@@ -66,7 +66,7 @@ touches audio itself.
 
 ## Install
 
-Grab the latest installer from [Releases](https://github.com/wsalas19/wmp-project/releases)
+Grab the latest installer from [Releases](https://github.com/wsalas19/frieda-player/releases)
 (once published — this repo is in private development for now):
 
 - `Frieda Player_x.y.z_x64-setup.exe` (NSIS, recommended)
