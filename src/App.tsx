@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { artTheme, FALLBACK_THEME, type ArtTheme } from "./theme";
+import { getVersion } from "@tauri-apps/api/app";
+
 
 interface MediaState {
   available: boolean;
@@ -52,7 +54,8 @@ function Spinner() {
 }
 
 export default function App() {
-  const [state, setState] = useState<MediaState>(IDLE);
+	const [state, setState] = useState<MediaState>(IDLE);
+  const [version, setVersion] = useState("");
   // Artwork lives in its own event/state so fat base64 payloads never ride
   // along with lightweight position/metadata ticks.
   const [art, setArt] = useState<string | null>(null);
@@ -97,13 +100,20 @@ export default function App() {
       setPending(false);
     });
     const unUpdates = listen<string | null>("check-updates", (e) => {
-      setToast(
-        e.payload
-          ? `Downloading update v${e.payload} — the app will restart.`
-          : "You are on the latest version.",
-      );
+			if (e.payload) {
+			setToast(`Downloading update v${e.payload} — the app will restart.`);
+				setTimeout(() => setToast(null), 5000);
+				return
+    }
+			setToast("You are on the latest version.");
+      setTimeout(() => setToast(null), 3000);
+		});
+    const unUpdateErr = listen("check-updates-error", () => {
+      setToast("Update check failed — try again later.");
       setTimeout(() => setToast(null), 5000);
-    });
+		});
+    getVersion().then((v) => setVersion(`v${v}`)).catch(() => {});
+
     const timer = setInterval(() => {
       const { at, position_ms, playing } = lastRef.current;
       if (playing) setPosition(position_ms + (Date.now() - at));
@@ -112,6 +122,7 @@ export default function App() {
       un.then((f) => f());
       unArt.then((f) => f());
       unThemePref.then((f) => f());
+      unUpdateErr.then((f) => f());
       unUpdates.then((f) => f());
       clearInterval(timer);
     };
@@ -265,10 +276,14 @@ export default function App() {
             </div>
           </div>
         </div>
-      )}
+			)}
+
+      <div className="absolute top-2 right-3 text-[9px] tabular-nums text-white/30">
+      	{version}
+			</div>
 
       {toast && (
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-md bg-white/10 px-3 py-1 text-[10px] text-white/80">
+        <div className="absolute top-2 right-3 rounded-md bg-[#56565a] px-3 py-1 text-[10px] text-white/80">
           {toast}
         </div>
       )}
