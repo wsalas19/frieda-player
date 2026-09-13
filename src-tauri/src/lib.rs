@@ -156,7 +156,11 @@ pub fn run() {
                                 Ok(None) => {
                                     let _ = a.emit("check-updates", None::<String>);
                                 }
-                                Err(e) => eprintln!("[wmp] update check failed: {e}"),
+                                Err(e) => {
+                                    eprintln!("[wmp] update check failed: {e}");
+                                    use tauri::Emitter;
+                                    let _ = a.emit("check-updates-error", ());
+                                }
                             }
                         });
                     }
