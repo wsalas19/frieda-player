@@ -8,5 +8,10 @@
     "keys": ["the 1975|being funny in a foreign language"],
     "bg": "#C1C1C1",
     "accent": "#003ad7"
-  }
+  },
+  {
+		"keys": ["american football|american football"],
+		"bg": "#38402f",
+		"accent": "#FFFAFA"
+	}
 ]
