@@ -177,7 +177,11 @@ export default function App() {
     <div
       data-tauri-drag-region
       className="group relative flex h-screen w-screen items-stretch rounded-2xl border border-white/10 bg-neutral-900/80 text-white shadow-2xl backdrop-blur-xl transition-colors duration-500"
-      style={theme.background ? { background: theme.background } : undefined}
+      style={
+        theme.background
+          ? { background: theme.background, color: theme.text }
+          : undefined
+      }
     >
       {/* Artwork */}
       <div data-tauri-drag-region className="m-2 h-[calc(100%-1rem)] shrink-0">
@@ -208,12 +212,12 @@ export default function App() {
             <div data-tauri-drag-region className="truncate text-sm font-semibold">
               {state.title || "Unknown track"}
             </div>
-            <div data-tauri-drag-region className="truncate text-xs text-white/60">
+            <div data-tauri-drag-region className="truncate text-xs opacity-75">
               {[state.artist, state.album].filter(Boolean).join(" · ") || "—"}
             </div>
             <div
               data-tauri-drag-region
-              className="mt-1 flex items-center gap-2 text-[10px] tabular-nums text-white/50"
+              className="mt-1 flex items-center gap-2 text-[10px] tabular-nums"
               style={theme.accent ? { color: theme.accent } : undefined}
             >
               <span>{fmt(position)}</span>
@@ -227,7 +231,7 @@ export default function App() {
             </div>
           </>
         ) : (
-          <div data-tauri-drag-region className="text-xs text-white/40">
+          <div data-tauri-drag-region className="text-xs opacity-75">
             No media playing — open Spotify, a browser tab, or any media app.
           </div>
         )}
@@ -278,7 +282,7 @@ export default function App() {
         </div>
 			)}
 
-      <div className="absolute top-2 right-3 text-[9px] tabular-nums text-white/30">
+      <div className="absolute top-2 right-3 text-[9px] tabular-nums opacity-75">
       	{version}
 			</div>
 

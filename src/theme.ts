@@ -1,13 +1,19 @@
-// Color grading from artwork, Panic's iTunes 11 style: edge-sampled background
-// color, contrast-filtered dominant interior accents, WCAG-compliant output.
-// Plain math, no deps.
+// Color grading from artwork, after Panic's iTunes 11 algorithm
+// (https://blog.panic.com/itunes-11-and-colors/) and its Mathematica
+// approximation: two most common perceptually-distinct colors (YUV distance)
+// become card + accent, white/black text whichever reads. Plain math, no deps.
 
 export interface ArtTheme {
 	background: string; // CSS color, "" = keep the default neutral card
+	text: string; // near-white or near-black, whichever reads on the card
 	accent: string; // CSS color for progress fill / timestamps
 }
 
-export const FALLBACK_THEME: ArtTheme = { background: "", accent: "" };
+export const FALLBACK_THEME: ArtTheme = {
+	background: "",
+	text: "",
+	accent: "",
+};
 
 type RGB = [number, number, number];
 
@@ -25,6 +31,16 @@ function contrast(l1: number, l2: number): number {
 	return (hi + 0.05) / (lo + 0.05);
 }
 
+// YUV converts better than RGB for perceptual "are these colors different".
+function yuvDist(a: RGB, b: RGB): number {
+	const [r1, g1, b1] = a.map((v) => v / 255);
+	const [r2, g2, b2] = b.map((v) => v / 255);
+	const dy = 0.299 * (r1 - r2) + 0.587 * (g1 - g2) + 0.114 * (b1 - b2);
+	const du = -0.14713 * (r1 - r2) - 0.28886 * (g1 - g2) + 0.436 * (b1 - b2);
+	const dv = 0.615 * (r1 - r2) - 0.51499 * (g1 - g2) - 0.10001 * (b1 - b2);
+	return Math.hypot(dy, du, dv);
+}
+
 function mix(a: RGB, b: RGB, t: number): RGB {
 	return [
 		a[0] + (b[0] - a[0]) * t,
@@ -35,20 +51,21 @@ function mix(a: RGB, b: RGB, t: number): RGB {
 
 const css = (c: RGB) => `rgb(${c.map(Math.round).join(" ")})`;
 
-const SIZE = 32;
+// 64x64: smaller grids average away thin features (title script text) — the
+// small vivid regions good accents come from.
+const SIZE = 64;
+// ponytail: knobs — min YUV distance between the two picked colors; the
+// source's 0.2 on a 0..1 scale, re-tuned by eye against a cover test set.
+const DISTINCT = 0.25;
 
-interface Buckets {
-	edge: RGB; // dominant perimeter color
-	interior: RGB[]; // inner colors, most frequent first
+interface Bucket {
+	color: RGB;
+	n: number; // pixel count
 }
 
-// Downsample to 32x32 (off-thread via createImageBitmap), then tally perimeter
-// and interior pixels into 12-bit color buckets ((r>>4)<<8 | (g>>4)<<4 | b>>4),
-// returning each group's average colors sorted by pixel count.
-async function extract(src: string): Promise<Buckets> {
-	// <img> + decode(), not fetch(): data: URLs are allowed by CSP for images
-	// but fetch() on them would need a connect-src grant. decode() decodes
-	// off the main thread; the 32x32 draw is negligible.
+// Downsample to 64x64 (off-thread via <img>.decode()) and tally pixels into
+// 12-bit color buckets ((r>>4)<<8 | (g>>4)<<4 | b>>4), most frequent first.
+async function extract(src: string): Promise<Bucket[]> {
 	const img = new Image();
 	img.src = src;
 	await img.decode();
@@ -58,82 +75,100 @@ async function extract(src: string): Promise<Buckets> {
 	ctx.drawImage(img, 0, 0, SIZE, SIZE);
 	const d = ctx.getImageData(0, 0, SIZE, SIZE).data;
 
-	interface Tally {
-		n: number;
-		r: number;
-		g: number;
-		b: number;
+	const tallies = new Map<
+		number,
+		{ n: number; r: number; g: number; b: number }
+	>();
+	for (let i = 0; i < d.length; i += 4) {
+		if (d[i + 3] < 128) continue;
+		const key = ((d[i] >> 4) << 8) | ((d[i + 1] >> 4) << 4) | (d[i + 2] >> 4);
+		const t = tallies.get(key) ?? { n: 0, r: 0, g: 0, b: 0 };
+		t.n++;
+		t.r += d[i];
+		t.g += d[i + 1];
+		t.b += d[i + 2];
+		tallies.set(key, t);
 	}
-	const edge = new Map<number, Tally>();
-	const interior = new Map<number, Tally>();
-	for (let y = 0; y < SIZE; y++) {
-		for (let x = 0; x < SIZE; x++) {
-			const i = (y * SIZE + x) * 4;
-			if (d[i + 3] < 128) continue;
-			const key = ((d[i] >> 4) << 8) | ((d[i + 1] >> 4) << 4) | (d[i + 2] >> 4);
-			const m =
-				x === 0 || y === 0 || x === SIZE - 1 || y === SIZE - 1
-					? edge
-					: interior;
-			const t = m.get(key) ?? { n: 0, r: 0, g: 0, b: 0 };
-			t.n++;
-			t.r += d[i];
-			t.g += d[i + 1];
-			t.b += d[i + 2];
-			m.set(key, t);
-		}
-	}
-	const avg = (t: Tally): RGB => [t.r / t.n, t.g / t.n, t.b / t.n];
-	const sorted = (m: Map<number, Tally>) =>
-		[...m.values()].sort((a, b) => b.n - a.n).map(avg);
-	const edges = sorted(edge);
-	if (edges.length === 0) throw new Error("empty artwork");
-	return { edge: edges[0], interior: sorted(interior) };
+	return [...tallies.values()]
+		.sort((a, b) => b.n - a.n)
+		.map((t) => ({ color: [t.r / t.n, t.g / t.n, t.b / t.n] as RGB, n: t.n }));
 }
 
+const WHITE: RGB = [250, 250, 250];
+const BLACK: RGB = [18, 18, 18];
+const WHITE_L = luminance(WHITE);
+const BLACK_L = luminance(BLACK);
+// Colorfulness (channel spread) — tiebreaker between equally-readable accents.
+const chroma = ([r, g, b]: RGB) => Math.max(r, g, b) - Math.min(r, g, b);
+// How much of the cover color survives into the card — the rest is the dark
+// base, keeping the widget dark-anchored on every cover (alpha comes back
+// below, but a 0.85 veil alone can't darken a white cover enough).
 const NEUTRAL: RGB = [23, 23, 23]; // matches bg-neutral-900
-const WHITE: RGB = [255, 255, 255];
+const BG_STRENGTH = 0.75;
 
 export async function artTheme(art: string): Promise<ArtTheme> {
-	let buckets: Buckets;
+	let buckets: Bucket[];
 	try {
 		buckets = await extract(art);
 	} catch {
 		return FALLBACK_THEME;
 	}
+	if (buckets.length === 0) return FALLBACK_THEME;
 
-	// Card: neutral-900 blended 40% with the dominant *edge* color (enough for
-	// the tint to read through the 0.85 alpha), then darkened until white text
-	// keeps >= 4.5:1 (cap L_bg at 1.05/4.5 - 0.05). ponytail: contrast is
-	// computed against the opaque color; at 0.85 alpha over a light wallpaper
-	// the real ratio drifts slightly — tighten maxBgL if that ever matters.
-	let bg = mix(NEUTRAL, buckets.edge, 0.4);
-	const maxBgL = 1.05 / 4.5 - 0.05;
-	// Scale down by the luminance overshoot (not a flat multiply) so the hue
-	// survives darkening instead of collapsing to gray.
-	const scale = Math.min(1, maxBgL / Math.max(luminance(bg), 1e-6));
-	bg = [bg[0] * scale, bg[1] * scale, bg[2] * scale];
-	for (let i = 0; i < 20 && luminance(bg) > maxBgL; i++) {
-		bg = [bg[0] * 0.95, bg[1] * 0.95, bg[2] * 0.95];
+	// Three most common perceptually-distinct colors: card, then two accent
+	// candidates to choose from. Buckets closer than DISTINCT to an already-
+	// picked color are skipped.
+	const distinct: Bucket[] = [];
+	for (const b of buckets) {
+		if (distinct.every((d) => yuvDist(d.color, b.color) >= DISTINCT)) {
+			distinct.push(b);
+			if (distinct.length === 3) break;
+		}
+	}
+
+	// Card: the dominant color at half strength over the dark base, then
+	// nudged until one of white/black text passes 4.5:1 (an unreadable
+	// mid-tone card slides toward whichever extreme text survives on).
+	let bg = mix(NEUTRAL, distinct[0].color, BG_STRENGTH);
+	const towardWhite =
+		contrast(luminance(bg), WHITE_L) >= contrast(luminance(bg), BLACK_L);
+	const textColor = towardWhite ? WHITE : BLACK;
+	for (
+		let i = 0;
+		i < 40 && contrast(luminance(bg), towardWhite ? WHITE_L : BLACK_L) < 4.5;
+		i++
+	) {
+		bg = mix(bg, towardWhite ? BLACK : WHITE, 0.05);
 	}
 	const bgL = luminance(bg);
 
-	// Accent: dominant interior color already passing 4.5:1 against the card
-	// (covers the 3:1 non-text minimum too). Monochrome covers rarely pass;
-	// lighten the dominant interior color as a fallback, then white.
-	let accent: RGB | undefined = buckets.interior.find(
-		(c) => contrast(luminance(c), bgL) >= 4.5,
-	);
-	if (!accent && buckets.interior.length > 0) {
-		accent = buckets.interior[0];
-		for (let i = 0; i < 12 && contrast(luminance(accent), bgL) < 4.5; i++) {
-			accent = mix(accent, WHITE, 0.15);
+	// Accent: try each remaining distinct color, nudge it toward the text
+	// direction until it passes 4.5:1, and keep the one needing the fewest
+	// nudges — readable first, then the more colorful of the readable ones.
+	// Monochrome covers fall back to the text color (iTunes' own trick).
+	const nudge = (c: RGB) => {
+		let v = c;
+		let i = 0;
+		while (i < 12 && contrast(luminance(v), bgL) < 4.5) {
+			v = mix(v, textColor, 0.15);
+			i++;
 		}
-		if (contrast(luminance(accent), bgL) < 4.5) accent = WHITE;
-	}
+		return contrast(luminance(v), bgL) >= 4.5 ? { v, i } : null;
+	};
+	const candidates = [distinct[1], distinct[2]]
+		.filter((b) => b !== undefined)
+		.map((b) => ({ base: b.color, ...nudge(b.color) }))
+		.filter((s) => s.v !== undefined && s.v !== null)
+		.sort(
+			(a, b) => (a.i ?? 12) - (b.i ?? 12) || chroma(b.base) - chroma(a.base),
+		);
+	let accent = candidates[0]?.v;
+	if (!accent) accent = textColor;
 
-	// 0.85 alpha matches the frosted card look. Note the slash: with
-	// space-separated channels, alpha must be `rgb(r g b / a)`.
-	const bgCss = `rgb(${bg.map(Math.round).join(" ")} / 0.85)`;
-	return { background: bgCss, accent: css(accent ?? WHITE) };
+	return {
+		// 0.85 alpha restores the frosted card look — slash syntax required.
+		background: `rgb(${bg.map(Math.round).join(" ")} / 0.85)`,
+		text: css(textColor),
+		accent: css(accent),
+	};
 }
