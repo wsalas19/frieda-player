@@ -15,7 +15,7 @@ export const FALLBACK_THEME: ArtTheme = {
 	accent: "",
 };
 
-type RGB = [number, number, number];
+export type RGB = [number, number, number];
 
 // WCAG 2.x relative luminance.
 function luminance([r, g, b]: RGB): number {
@@ -106,6 +106,62 @@ const chroma = ([r, g, b]: RGB) => Math.max(r, g, b) - Math.min(r, g, b);
 const NEUTRAL: RGB = [23, 23, 23]; // matches bg-neutral-900
 const BG_STRENGTH = 0.75;
 
+// Shared finishing: card color at BG_STRENGTH over the dark base, nudged
+// until white or black text passes 4.5:1; first accent candidate that needs
+// the fewest nudges to pass wins (ties → the more colorful). Used by both the
+// extraction path and hand-authored colorways.
+function finish(
+	bgSource: RGB,
+	accentCandidates: (RGB | undefined)[],
+): ArtTheme {
+	// Card: nudged until one of white/black text passes 4.5:1 (an unreadable
+	// mid-tone card slides toward whichever extreme text survives on).
+	let bg = mix(NEUTRAL, bgSource, BG_STRENGTH);
+	const towardWhite =
+		contrast(luminance(bg), WHITE_L) >= contrast(luminance(bg), BLACK_L);
+	const textColor = towardWhite ? WHITE : BLACK;
+	for (
+		let i = 0;
+		i < 40 && contrast(luminance(bg), towardWhite ? WHITE_L : BLACK_L) < 4.5;
+		i++
+	) {
+		bg = mix(bg, towardWhite ? BLACK : WHITE, 0.05);
+	}
+	const bgL = luminance(bg);
+
+	const nudge = (c: RGB) => {
+		let v = c;
+		let i = 0;
+		while (i < 12 && contrast(luminance(v), bgL) < 4.5) {
+			v = mix(v, textColor, 0.15);
+			i++;
+		}
+		return contrast(luminance(v), bgL) >= 4.5 ? { v, i } : null;
+	};
+	const candidates = accentCandidates
+		.filter((c) => c !== undefined)
+		.map((c) => ({ base: c, ...nudge(c) }))
+		.filter((s) => s.v !== undefined && s.v !== null)
+		.sort(
+			(a, b) => (a.i ?? 12) - (b.i ?? 12) || chroma(b.base) - chroma(a.base),
+		);
+	let accent = candidates[0]?.v;
+	if (!accent) accent = textColor;
+
+	return {
+		// 0.85 alpha restores the frosted card look — slash syntax required.
+		background: `rgb(${bg.map(Math.round).join(" ")} / 0.85)`,
+		text: css(textColor),
+		accent: css(accent),
+	};
+}
+
+// Hand-authored colorway (colorways.json): the submitted colors go through
+// the same finishing pipeline, so community entries can't ship unreadable.
+export function themeFromColors(bg: RGB, accent: RGB): ArtTheme {
+	return finish(bg, [accent]);
+}
+
 export async function artTheme(art: string): Promise<ArtTheme> {
 	let buckets: Bucket[];
 	try {
@@ -125,50 +181,8 @@ export async function artTheme(art: string): Promise<ArtTheme> {
 			if (distinct.length === 3) break;
 		}
 	}
-
-	// Card: the dominant color at half strength over the dark base, then
-	// nudged until one of white/black text passes 4.5:1 (an unreadable
-	// mid-tone card slides toward whichever extreme text survives on).
-	let bg = mix(NEUTRAL, distinct[0].color, BG_STRENGTH);
-	const towardWhite =
-		contrast(luminance(bg), WHITE_L) >= contrast(luminance(bg), BLACK_L);
-	const textColor = towardWhite ? WHITE : BLACK;
-	for (
-		let i = 0;
-		i < 40 && contrast(luminance(bg), towardWhite ? WHITE_L : BLACK_L) < 4.5;
-		i++
-	) {
-		bg = mix(bg, towardWhite ? BLACK : WHITE, 0.05);
-	}
-	const bgL = luminance(bg);
-
-	// Accent: try each remaining distinct color, nudge it toward the text
-	// direction until it passes 4.5:1, and keep the one needing the fewest
-	// nudges — readable first, then the more colorful of the readable ones.
-	// Monochrome covers fall back to the text color (iTunes' own trick).
-	const nudge = (c: RGB) => {
-		let v = c;
-		let i = 0;
-		while (i < 12 && contrast(luminance(v), bgL) < 4.5) {
-			v = mix(v, textColor, 0.15);
-			i++;
-		}
-		return contrast(luminance(v), bgL) >= 4.5 ? { v, i } : null;
-	};
-	const candidates = [distinct[1], distinct[2]]
-		.filter((b) => b !== undefined)
-		.map((b) => ({ base: b.color, ...nudge(b.color) }))
-		.filter((s) => s.v !== undefined && s.v !== null)
-		.sort(
-			(a, b) => (a.i ?? 12) - (b.i ?? 12) || chroma(b.base) - chroma(a.base),
-		);
-	let accent = candidates[0]?.v;
-	if (!accent) accent = textColor;
-
-	return {
-		// 0.85 alpha restores the frosted card look — slash syntax required.
-		background: `rgb(${bg.map(Math.round).join(" ")} / 0.85)`,
-		text: css(textColor),
-		accent: css(accent),
-	};
+	return finish(
+		distinct[0].color,
+		distinct.slice(1).map((b) => b.color),
+	);
 }

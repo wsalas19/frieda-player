@@ -12,8 +12,12 @@ use tauri::{
 // instead of tauri-plugin-store; swap if real settings accumulate.
 static THEME_ENABLED: Mutex<bool> = Mutex::new(true);
 
+fn data_file(app: &AppHandle, name: &str) -> Option<std::path::PathBuf> {
+    Some(app.path().app_data_dir().ok()?.join(name))
+}
+
 fn settings_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    Some(app.path().app_data_dir().ok()?.join("settings.json"))
+    data_file(app, "settings.json")
 }
 
 fn load_theme_pref(app: &AppHandle) -> bool {
@@ -64,6 +68,13 @@ fn get_theme_pref() -> bool {
     *THEME_ENABLED.lock().unwrap()
 }
 
+// User/community colorway additions, same JSON schema as the embedded file.
+#[tauri::command]
+fn read_user_colorways(app: AppHandle) -> Option<String> {
+    let path = data_file(&app, "colorways.json")?;
+    std::fs::read_to_string(path).ok()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -72,7 +83,12 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![control, get_state, get_theme_pref])
+        .invoke_handler(tauri::generate_handler![
+            control,
+            get_state,
+            get_theme_pref,
+            read_user_colorways
+        ])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Show / Hide Widget", true, None::<&str>)?;
             let on_top = CheckMenuItem::with_id(app, "on_top", "Always on Top", true, true, None::<&str>)?;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { artTheme, FALLBACK_THEME, type ArtTheme } from "./theme";
+import { loadColorways, normalizeKey, themeFor, type Colorway } from "./colorways";
 import { getVersion } from "@tauri-apps/api/app";
 
 
@@ -62,6 +63,8 @@ export default function App() {
   const [theme, setTheme] = useState<ArtTheme>(FALLBACK_THEME);
   // Tray-controlled "Dynamic Theme" setting; backend persists it.
   const [enableTheme, setEnableTheme] = useState(true);
+  // Hand-authored per-album colorways (embedded + user file).
+  const [colorways, setColorways] = useState<Map<string, Colorway> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pendingTimer = useRef<number | null>(null);
@@ -92,6 +95,7 @@ export default function App() {
       setEnableTheme(e.payload),
     );
     invoke<boolean>("get_theme_pref").then(setEnableTheme).catch(() => {});
+    loadColorways().then(setColorways).catch(() => {});
     const un = listen<MediaState>("media-state", (e) => {
       const s = e.payload;
       lastRef.current = { at: Date.now(), position_ms: s.position_ms, playing: s.playing };
@@ -129,20 +133,26 @@ export default function App() {
   }, []);
 
   // Re-grade the card whenever the artwork changes — unless the tray setting
-  // turns the dynamic theme off, which pins the neutral look.
+  // turns the dynamic theme off, which pins the neutral look. Hand-authored
+  // colorways (matched by artist|album) win over automatic extraction.
   useEffect(() => {
     if (!art || !enableTheme) {
       setTheme(FALLBACK_THEME);
       return;
     }
+    const key = normalizeKey(state.artist, state.album);
+    if (import.meta.env.DEV) console.log("[wmp:key]", key);
+    const pending = colorways?.has(key)
+      ? Promise.resolve(themeFor(colorways.get(key)!))
+      : artTheme(art);
     let alive = true;
-    artTheme(art).then((t) => {
+    pending.then((t) => {
       if (alive) setTheme(t);
     });
     return () => {
       alive = false;
     };
-  }, [art, enableTheme]);
+  }, [art, enableTheme, colorways, state.artist, state.album]);
 
   const send = (action: string) => {
     setPending(true);
