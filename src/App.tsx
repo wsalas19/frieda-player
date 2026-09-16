@@ -241,7 +241,7 @@ export default function App() {
             </div>
           </>
         ) : (
-          <div data-tauri-drag-region className="text-xs opacity-75">
+          <div data-tauri-drag-region className="text-xs opacity-60">
             No media playing — open Spotify, a browser tab, or any media app.
           </div>
         )}
