@@ -43,6 +43,16 @@ It is a visualizer/controller, not a player: the widget reads metadata,
 artwork and timeline, and sends play/pause/skip back through the OS. It never
 touches audio itself.
 
+### Why this exists
+
+Because music is more than sound waves on your ears. Album artwork is part of
+the music — the mood the artist wanted you in before the first note played —
+and this widget is an attempt to honor that: capturing the artwork's (and
+thus the music's) mood into color combinations, chosen deterministically by
+the algorithm or by curated selection, so that what you see matches what you
+hear. Enjoying music more by making the two inputs agree is the whole point
+of this program.
+
 ## Features
 
 - **Frameless floating card** — transparent, draggable, always-on-top by default
@@ -50,13 +60,16 @@ touches audio itself.
   progress bar
 - **Color grading** — the card tints itself to the artwork. Inspired by
   Panic's iTunes 11 algorithm ([blog post](https://blog.panic.com/itunes-11-and-colors/),
-  [ColorArt](https://github.com/panicinc/ColorArt)): perimeter sampling picks
-  the frame color for the frosted background, interior buckets are ranked by
-  prevalence × colorfulness for the accent (progress bar, timestamps), muted
-  colors are saturation-boosted, and the accent is adjusted until it passes
-  [WCAG](https://www.w3.org/TR/WCAG22/) contrast (≥ 4.5:1) against the card.
-  Truly monochrome covers stay neutral. Toggle it in the tray (**Dynamic
-  Theme**). No dependencies — just canvas math (`src/theme.ts`)
+  [ColorArt](https://github.com/panicinc/ColorArt)) and by [Seth Thompson's
+  StackOverflow walkthrough](https://stackoverflow.com/questions/13637892/how-does-the-algorithm-to-color-the-song-list-in-itunes-11-work)
+  of it: the two most common perceptually-distinct colors (compared in the
+  YUV color space) become the card color and the accent (progress bar,
+  timestamps), nudged until they pass [WCAG](https://www.w3.org/TR/WCAG22/)
+  contrast (≥ 4.5:1) against each other. Bright covers earn bright cards with
+  dark text; dark covers the reverse. Covers the algorithm can't feel right
+  about can be hand-tuned via curated **colorways** (per-album overrides,
+  user-extensible). Toggle it in the tray (**Dynamic Theme**). No
+  dependencies — just canvas math (`src/theme.ts`, `src/colorways.ts`)
 - **Hover controls** — previous / play-pause / next with instant feedback
   (optimistic UI + pending spinner), plus a click-to-seek bar that appears
   along the bottom edge on hover

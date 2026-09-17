@@ -237,6 +237,12 @@ events are not replayed.
 - `theme-preference` — event, backend → UI (payload `boolean`). Emitted when
   the tray toggle flips. The UI bypasses color grading when false.
 
+### Colorways — hand-authored overrides
+
+- `read_user_colorways` — command, UI → backend. Returns the raw text of
+  `colorways.json` from the app data dir (or `null`); parsed and validated
+  frontend-side. See §5.3.
+
 Persistence lives in `lib.rs`, deliberately not `tauri-plugin-store`: one
 boolean, stored as `{"enable_theme": bool}` in `settings.json` in the app
 data dir via `std::fs`. A corrupted file is logged and self-healed to
@@ -292,38 +298,68 @@ bar, so the card stays draggable *through* the overlay.
 On every artwork change (and only if the Dynamic Theme setting is on), the UI
 re-grades the card, after Panic's iTunes 11 algorithm
 ([blog post](https://blog.panic.com/itunes-11-and-colors/),
-[ColorArt](https://github.com/panicinc/ColorArt)):
+[ColorArt](https://github.com/panicinc/ColorArt)) and [Seth Thompson's
+StackOverflow walkthrough](https://stackoverflow.com/questions/13637892/how-does-the-algorithm-to-color-the-song-list-in-itunes-11-work)
+of it:
 
 1. **Extract**: load the artwork via `<img>.decode()` (CSP allows `data:` for
    images; `fetch()` on them would need a `connect-src` grant — using fetch
    here is what once silently disabled grading in packaged builds), draw to a
-   64×64 canvas, and tally perimeter and interior pixels into 12-bit color
-   buckets (`r>>4, g>>4, b>>4`). 64×64 (not 32) so thin features — album-title
-   script text, a small vivid logo — survive downsampling.
-2. **Background tint**: the dominant *perimeter* bucket is the frame color —
-   unless it's colorless (black bars love winning the edge vote), in which
-   case the most prominent chromatic edge bucket (≥ `EDGE_SHARE` of edge
-   pixels, chroma ≥ `CHROMA_NEUTRAL`) tints instead; with no chromatic edge
-   at all the card stays deliberately neutral. Weak tints (muted blues,
-   dusty reds) are saturation-boosted — channel spread expanded around the
-   midpoint to `CHROMA_TINT_TARGET` — before being blended 40% into
-   neutral-900, then darkened until white text keeps ≥ 4.5:1 WCAG contrast
-   (relative luminance capped at `1.05/4.5 − 0.05`). Emitted at 0.85 alpha
-   to keep the frosted transparency over the desktop.
-3. **Accent**: rank ALL interior buckets by `count × chroma^4`, take the
-   winner, then lighten it toward white in hue-preserving steps until it
-   passes 4.5:1 against the card. Ranking *before* contrast-filtering is
-   load-bearing: against a near-black card, mid-luminance vivid colors fail
-   4.5:1 while pale grays pass, so filtering first deletes exactly the colors
-   worth showing. If the winning bucket is itself colorless (true B&W cover),
-   fall back to the most common passing bucket. White as last resort.
+   64×64 canvas, and tally pixels into 12-bit color buckets
+   (`r>>4, g>>4, b>>4`), most frequent first. 64×64 (not 32) so thin
+   features — album-title script text, a small vivid logo — survive
+   downsampling.
+2. **Pick two colors**: walk the buckets in count order and keep the first
+   three whose YUV Euclidean distance to every already-picked color is at
+   least `DISTINCT`. The most common becomes the card; the next two are
+   accent candidates. YUV (not RGB) distance matters: it approximates which
+   colors *look* different to humans.
+3. **Finish** (`finish()`, shared with hand-authored colorways §5.3): the
+   card color is blended `BG_STRENGTH` (75%) over a dark base — the widget
+   stays dark-anchored even on white covers — then nudged until either white
+   or black text passes 4.5:1 WCAG contrast, and the text polarity
+   (near-white/near-black) is chosen accordingly; bright covers earn bright
+   cards with dark text, dark covers the reverse. Each accent candidate is
+   nudged toward the text direction until it passes 4.5:1 (covers the 3:1
+   non-text bar too), and the candidate needing the fewest nudges wins —
+   ties go to the more colorful. If nothing qualifies, the accent falls back
+   to the text color (iTunes' own trick for monochrome covers).
 
 All WCAG math is ~15 lines of plain functions (`luminance`, `contrast`,
-`mix`); `chroma` is the max−min RGB spread. No dependency. The tuning knobs
-(`CHROMA_NEUTRAL`, `EDGE_SHARE`, `CHROMA_TINT_TARGET`, the exponent, `SIZE`)
+`mix`). No dependency. The tuning knobs (`DISTINCT`, `BG_STRENGTH`, `SIZE`)
 are constants at the top of the file with a `ponytail:` note — calibration
 history lives in the git log. Failure of any step falls back to the neutral
 theme.
+
+### 5.3 `colorways.ts` — hand-authored per-album colorways
+
+Extraction will never feel humanly right on every cover, so specific albums
+can be pinned to specific colors. Entries live in two places, merged into one
+lookup map (local wins):
+
+- `src/colorways.json` — curated entries, bundled with the app.
+- `colorways.json` in the **app data dir** — personal/community additions,
+  editable without a reinstall; read through the `read_user_colorways`
+  command (raw text, parsed and validated in the frontend).
+
+Schema (all fields required; malformed entries are skipped silently):
+
+```json
+[{ "keys": ["trivium|ascendancy", "trivium|ascendancy (special edition)"],
+   "bg": "#191418", "accent": "#b3402e" }]
+```
+
+Matching is by normalized `artist|album` string — SMTC exposes no MusicBrainz
+ID or ISRC, so aliases for different release namings are load-bearing. On a
+hit, the entry goes through the same `finish()` pipeline as extracted colors,
+so community contributions can't ship unreadable cards. On a miss, automatic
+extraction runs unchanged. In dev builds every track change logs the
+normalized key (`[wmp:key]`) to the console — building entries is
+copy-paste from devtools.
+
+Future: a community-maintained remote file fetched at startup (needs one
+deliberate CSP `connect-src` addition), and a "pin this colorway" UI action
+that writes entries into the local file.
 
 ---
 
