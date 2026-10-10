@@ -14,6 +14,9 @@ pub struct MediaState {
     pub position_ms: u64,
     pub duration_ms: u64,
     pub playing: bool,
+    /// Volume of the media app's audio sessions (system volume if the app has
+    /// none). 0 when nothing is playing, since it is then meaningless.
+    pub volume: f32,
 }
 
 /// Startup snapshot: last known state + artwork, so the UI can sync on mount
@@ -157,6 +160,12 @@ fn backend_loop(app: AppHandle) {
                 state.title = props.Title().unwrap_or_default().to_string();
                 state.artist = props.Artist().unwrap_or_default().to_string();
                 state.album = props.AlbumTitle().unwrap_or_default().to_string();
+
+                let aumid = session.SourceAppUserModelId().unwrap_or_default().to_string();
+                // ponytail: a session enumeration per loop iteration (~1ms,
+                // cadence is the 5s tick plus real media events). Cache it
+                // against `aumid` if it ever shows up in a profile.
+                state.volume = crate::volume::get(&aumid).unwrap_or(1.0);
 
                 // SMTC hands out the PREVIOUS track's thumbnail stream for a
                 // short moment after the metadata event fires, so reading art
@@ -331,6 +340,16 @@ fn apply_control(
     session: &windows::Media::Control::GlobalSystemMediaTransportControlsSession,
     action: &str,
 ) {
+    // Volume is not an SMTC call: it goes to the app's WASAPI sessions (or the
+    // system endpoint) via the app's AUMID. Handled first to keep the match flat.
+    if let Some(level) = action.strip_prefix("volume:").and_then(|v| v.parse::<f32>().ok()) {
+        let aumid = session.SourceAppUserModelId().unwrap_or_default().to_string();
+        if !crate::volume::set(&aumid, level) {
+            eprintln!("[wmp] volume: no audio session for {aumid:?} and no system endpoint");
+        }
+        return;
+    }
+
     let result = match action {
         "play_pause" => session.TryTogglePlayPauseAsync().and_then(|op| op.get()),
         "next" => session.TrySkipNextAsync().and_then(|op| op.get()),

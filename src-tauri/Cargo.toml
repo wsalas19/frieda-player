@@ -31,6 +31,13 @@ windows = { version = "0.61", features = [
     "Media_Control",
     "Storage_Streams",
     "Foundation",
+    # Volume: WASAPI audio sessions (per-app) + endpoint volume (system fallback).
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_Storage_Packaging_Appx",
 ] }
 
 

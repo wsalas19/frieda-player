@@ -1,4 +1,5 @@
 mod media;
+mod volume;
 
 use std::sync::Mutex;
 use tauri::{
