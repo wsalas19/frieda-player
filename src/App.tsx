@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { artTheme, FALLBACK_THEME, type ArtTheme } from "./theme";
 import { loadColorways, normalizeKey, themeFor, type Colorway } from "./colorways";
+import { copyCard } from "./share";
 import { getVersion } from "@tauri-apps/api/app";
 
 
@@ -127,6 +128,35 @@ export default function App() {
     playing: false,
   });
 
+  const notify = (msg: string, ms = 3000) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), ms);
+  };
+
+  /** Copies the card to the clipboard as a PNG — the share path that replaces
+   *  the print dialog (Ctrl+P is blocked below; a print-out of a transparent
+   *  widget was never the point). */
+  const share = () => {
+    if (!art) {
+      notify("No artwork to copy yet.");
+      return;
+    }
+    copyCard({
+      title: state.title,
+      artist: state.artist,
+      album: state.album,
+      duration_ms: state.duration_ms,
+      position,
+      art,
+      theme,
+    })
+      .then(() => notify("Card copied as an image."))
+      .catch((e) => {
+        if (import.meta.env.DEV) console.error(e);
+        notify("Couldn't copy the card.");
+      });
+  };
+
   useEffect(() => {
     // Startup sync: the backend may have emitted before this listener existed.
     invoke<{ state: MediaState; art: string | null } | null>("get_state").then((snap) => {
@@ -159,18 +189,12 @@ export default function App() {
       setPending(false);
     });
     const unUpdates = listen<string | null>("check-updates", (e) => {
-			if (e.payload) {
-			setToast(`Downloading update v${e.payload} — the app will restart.`);
-				setTimeout(() => setToast(null), 5000);
-				return
-    }
-			setToast("You are on the latest version.");
-      setTimeout(() => setToast(null), 3000);
-		});
+      if (e.payload) return notify(`Downloading update v${e.payload} — the app will restart.`, 5000);
+      notify("You are on the latest version.");
+    });
     const unUpdateErr = listen("check-updates-error", () => {
-      setToast("Update check failed — try again later.");
-      setTimeout(() => setToast(null), 5000);
-		});
+      notify("Update check failed — try again later.", 5000);
+    });
     getVersion().then((v) => setVersion(`v${v}`)).catch(() => {});
 
     const timer = setInterval(() => {
@@ -242,6 +266,13 @@ export default function App() {
   // volume (the mapping YouTube uses). Needs window focus, so: click the card.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The webview is Chromium, so Ctrl+P would open a print dialog on a
+      // transparent widget. Blocked before the playback guard below, since
+      // print has nothing to do with what's playing.
+      if (e.ctrlKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        return;
+      }
       const { position, duration, volume } = arrows.current;
       if (!duration) return;
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
@@ -360,12 +391,34 @@ export default function App() {
               <path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" />
             </svg>
           </button>
-          {/* Volume — same track/fill language as the progress bar, plus a
-              knob. Deliberately NOT on the seek bar's row: two adjacent
+          {/* Share — top-right, balancing the volume group at top-left so the
+              transport cluster stays centred. Redraws the card to a canvas
+              rather than screenshotting (see src/share.ts). */}
+          <button
+            onClick={share}
+            className="pointer-events-auto absolute top-3 right-4 cursor-pointer rounded-full p-1.5 text-white/60 hover:bg-white/10 hover:text-white active:scale-95"
+            title="Copy card as image"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
+          {/* Volume — same track/fill language as the progress bar, plus a              knob. Deliberately NOT on the seek bar's row: two adjacent
               horizontal sliders get mis-scrubbed, so volume sits at the top-left
               end instead, sharing the seek bar's 1rem left margin. It drives the
               media app's own audio sessions (system volume if it has none). */}
-          <div className="pointer-events-auto absolute top-3 left-4 flex items-center gap-2" title="Volume">
+          {/* h-7 matches the share button's box (p-1.5 + h-4 icon), so the two
+              top-corner groups share a centre line. */}
+          <div className="pointer-events-auto absolute top-3 left-4 flex h-7 items-center gap-2" title="Volume">
             <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current opacity-60">
               <path d="M5 9v6h3.5L13 19V5L8.5 9H5zm11.5 3a4.5 4.5 0 0 0-2-3.7v7.4a4.5 4.5 0 0 0 2-3.7z" />
             </svg>
@@ -410,9 +463,10 @@ export default function App() {
         </div>
 			)}
 
-      <div className="absolute top-2 right-3 text-[9px] tabular-nums opacity-75">
-      	{version}
-			</div>
+      {/* Version tag fades out on hover: the share button takes that corner. */}
+      <div className="absolute top-2 right-3 text-[9px] tabular-nums opacity-75 transition-opacity group-hover:opacity-0">
+        {version}
+      </div>
 
       {toast && (
         <div className="absolute top-2 right-3 rounded-md bg-[#56565a] px-3 py-1 text-[10px] text-white/80">

@@ -62,6 +62,7 @@ src-tauri/
   icons/           # Generated icon set (npm run tauri icon <png>)
 src/
   App.tsx       # The whole UI: card, progress, controls, toasts
+  share.ts      # Redraws the card to a canvas → clipboard PNG
   theme.ts      # Artwork-driven color grading + WCAG contrast math
 docs/           # This documentation, logo, screenshots
 .github/workflows/release.yml   # Builds installers on v* tags (tauri-action)
@@ -351,6 +352,13 @@ Single component. Responsibilities:
   reads current values through an `arrows` ref, so it never re-registers.
   Caveat: it only fires while the webview holds focus, i.e. after clicking
   the card; a desktop widget can't claim arrow keys system-wide.
+- **Ctrl+P is blocked** in that same listener, before the playback guard.
+  The webview is Chromium, so print would otherwise open a dialog on a
+  transparent widget — and a print-out was never a useful artifact. The
+  share path is a **copy-card-as-image** button in the hover overlay
+  (`src/share.ts`): the card is redrawn onto a canvas and the PNG goes to
+  the clipboard. A tray menu item can't do this — a tray click is not a
+  webview user gesture, so Chromium blocks `navigator.clipboard` from it.
 
 Window dragging works because most elements carry `data-tauri-drag-region`;
 the hover overlay is `pointer-events-none` except the buttons and the seek
@@ -423,6 +431,21 @@ copy-paste from devtools.
 Future: a community-maintained remote file fetched at startup (needs one
 deliberate CSP `connect-src` addition), and a "pin this colorway" UI action
 that writes entries into the local file.
+
+### 5.4 `share.ts` — copy the card as an image
+
+`copyCard()` redraws the card onto a `<canvas>` at 2× and puts the PNG on
+the clipboard via `ClipboardItem`. Because it is a real click inside the
+webview, `navigator.clipboard.write` is allowed — the same call from a tray
+menu item is not.
+
+The trade-off is deliberate and is the one thing to keep in mind: the image
+is **re-drawn**, not captured, so the card's geometry is duplicated here as
+constants (`W`/`H`/`PAD`/`ART_W`/radii) and any layout change in `App.tsx`
+has to be mirrored. The alternative — WebView2's `CapturePreview` — needs
+COM plumbing in Rust and a PNG→DIB clipboard conversion to be useful. The
+artwork is drawn from the already-loaded `data:` URL image, not `fetch()`ed:
+the CSP has no `connect-src` for it.
 
 ---
 

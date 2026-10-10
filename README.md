@@ -71,8 +71,10 @@ of this program.
   user-extensible). Toggle it in the tray (**Dynamic Theme**). No
   dependencies — just canvas math (`src/theme.ts`, `src/colorways.ts`)
 - **Hover controls** — previous / play-pause / next with instant feedback
-  (optimistic UI + pending spinner), plus a click-to-seek bar that appears
-  along the bottom edge on hover
+  (optimistic UI + pending spinner), a click-to-seek bar along the bottom
+  edge, and a **copy button** that redraws the card onto your clipboard as a
+  PNG — the shortcut for sharing what you're listening to (the print dialog
+  is deliberately disabled; a transparent widget prints to nothing)
 - **Volume, and it's the app's own** — the slider drives the media app's audio
   sessions (the same slider as its entry in the Windows volume mixer), found by
   matching the SMTC source app's AUMID to its WASAPI sessions; it falls back to
