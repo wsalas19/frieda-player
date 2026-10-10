@@ -7,3 +7,31 @@ body,
   overflow: hidden;
   user-select: none;
 }
+
+/* Truncated text drifts out to reveal its tail, then back, on a slow cycle —
+   never on hover, because hovering raises the controls overlay over it.
+   --mq is the measured overflow, so text that fits never moves at all; the
+   dwells at either end keep the card at rest for most of the cycle. */
+@keyframes mq {
+  0%,
+  20% {
+    transform: translateX(0);
+  }
+  45%,
+  75% {
+    transform: translateX(var(--mq));
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.mq {
+  animation: mq var(--mq-dur) ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mq {
+    animation: none;
+  }
+}

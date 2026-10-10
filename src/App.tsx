@@ -14,6 +14,7 @@ interface MediaState {
   position_ms: number;
   duration_ms: number;
   playing: boolean;
+  volume: number;
 }
 
 const IDLE: MediaState = {
@@ -24,12 +25,20 @@ const IDLE: MediaState = {
   position_ms: 0,
   duration_ms: 0,
   playing: false,
+  volume: 1,
 };
 
 function fmt(ms: number): string {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
   return `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** Position of a click/drag along an element's width, as 0..1. */
+function fraction(e: React.PointerEvent | React.MouseEvent): number {
+  return clamp((e.clientX - e.currentTarget.getBoundingClientRect().left) / e.currentTarget.clientWidth, 0, 1);
 }
 
 function PlayIcon({ playing }: { playing: boolean }) {
@@ -54,6 +63,41 @@ function Spinner() {
   );
 }
 
+/** Single-line text that drifts to its tail on a slow cycle when it overflows. */
+function Marquee({ text, className = "" }: { text: string; className?: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const inner = useRef<HTMLDivElement>(null);
+  const [shift, setShift] = useState(0);
+
+  useEffect(() => {
+    const b = box.current;
+    const i = inner.current;
+    if (b && i) setShift(Math.max(0, i.scrollWidth - b.clientWidth));
+  }, [text]);
+
+  return (
+    <div ref={box} data-tauri-drag-region className={`overflow-hidden ${className}`}>
+      <div
+        ref={inner}
+        data-tauri-drag-region
+        className={shift ? "mq w-max whitespace-nowrap" : "whitespace-nowrap"}
+        style={
+          shift
+            ? ({
+                "--mq": `-${shift}px`,
+                // The glide legs are 25% of the cycle each, so dividing by 7.5
+                // lands near ~30px/s; the rest of the cycle is dwell time.
+                "--mq-dur": `${Math.min(30, Math.max(10, shift / 7.5))}s`,
+              } as React.CSSProperties)
+            : undefined
+        }
+      >
+        {text}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
 	const [state, setState] = useState<MediaState>(IDLE);
   const [version, setVersion] = useState("");
@@ -70,6 +114,13 @@ export default function App() {
   const pendingTimer = useRef<number | null>(null);
   // Locally interpolated position so the bar moves smoothly between backend ticks.
   const [position, setPosition] = useState(0);
+  // Volume is optimistic like play/pause: the slider follows the pointer, the
+  // backend's echo is ignored mid-drag, and writes are throttled.
+  const [volume, setVolume] = useState(1);
+  const volAt = useRef(0);
+  const volDragging = useRef(false);
+  // Latest values for the global key handler, which must not re-register.
+  const arrows = useRef({ position: 0, duration: 0, volume: 1 });
   const lastRef = useRef<{ at: number; position_ms: number; playing: boolean }>({
     at: Date.now(),
     position_ms: 0,
@@ -87,6 +138,7 @@ export default function App() {
         };
         setPosition(snap.state.position_ms);
         setState(snap.state);
+        setVolume(snap.state.volume);
         setArt(snap.art);
       }
     });
@@ -101,6 +153,9 @@ export default function App() {
       lastRef.current = { at: Date.now(), position_ms: s.position_ms, playing: s.playing };
       setPosition(s.position_ms);
       setState(s);
+      if (!volDragging.current) {
+        setVolume(s.volume);
+      }
       setPending(false);
     });
     const unUpdates = listen<string | null>("check-updates", (e) => {
@@ -171,12 +226,42 @@ export default function App() {
     }
     invoke("control", { action });
   };
+  const applyVolume = (v: number, force = false) => {
+    setVolume(v);
+    // Each write enumerates the app's audio sessions in the backend, so a drag
+    // is throttled; the release commits the exact final value.
+    const now = Date.now();
+    if (!force && now - volAt.current < 80) return;
+    volAt.current = now;
+    invoke("control", { action: `volume:${v.toFixed(3)}` });
+  };
+  useEffect(() => {
+    arrows.current = { position, duration: state.duration_ms, volume };
+  });
+  // Arrow keys drive the widget's two axes: horizontal = position, vertical =
+  // volume (the mapping YouTube uses). Needs window focus, so: click the card.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const { position, duration, volume } = arrows.current;
+      if (!duration) return;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const target = clamp(position + (e.key === "ArrowRight" ? 5000 : -5000), 0, duration);
+        setPosition(target);
+        lastRef.current = { ...lastRef.current, at: Date.now(), position_ms: target };
+        invoke("control", { action: `seek:${Math.round(target)}` });
+      } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        applyVolume(clamp(volume + (e.key === "ArrowUp" ? 0.05 : -0.05), 0, 1), true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const pct = state.duration_ms > 0 ? Math.min(100, (position / state.duration_ms) * 100) : 0;
   const seek = (e: React.MouseEvent<HTMLDivElement>) => {
     if (state.duration_ms === 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const target =
-      Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1) * state.duration_ms;
+    const target = fraction(e) * state.duration_ms;
     // Optimistic jump; the backend's timeline event reconciles.
     setPosition(target);
     lastRef.current = { ...lastRef.current, at: Date.now(), position_ms: target };
@@ -219,12 +304,11 @@ export default function App() {
       <div data-tauri-drag-region className="flex min-w-0 flex-1 flex-col justify-center gap-1 py-2 pr-3">
         {state.available ? (
           <>
-            <div data-tauri-drag-region className="truncate text-sm font-semibold">
-              {state.title || "Unknown track"}
-            </div>
-            <div data-tauri-drag-region className="truncate text-xs opacity-75">
-              {[state.artist, state.album].filter(Boolean).join(" · ") || "—"}
-            </div>
+            <Marquee text={state.title || "Unknown track"} className="text-sm font-semibold" />
+            <Marquee
+              text={[state.artist, state.album].filter(Boolean).join(" · ") || "—"}
+              className="text-xs opacity-75"
+            />
             <div
               data-tauri-drag-region
               className="mt-1 flex items-center gap-2 text-[10px] tabular-nums"
@@ -276,6 +360,40 @@ export default function App() {
               <path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" />
             </svg>
           </button>
+          {/* Volume — same track/fill language as the progress bar, plus a
+              knob. Deliberately NOT on the seek bar's row: two adjacent
+              horizontal sliders get mis-scrubbed, so volume sits at the top-left
+              end instead, sharing the seek bar's 1rem left margin. It drives the
+              media app's own audio sessions (system volume if it has none). */}
+          <div className="pointer-events-auto absolute top-3 left-4 flex items-center gap-2" title="Volume">
+            <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current opacity-60">
+              <path d="M5 9v6h3.5L13 19V5L8.5 9H5zm11.5 3a4.5 4.5 0 0 0-2-3.7v7.4a4.5 4.5 0 0 0 2-3.7z" />
+            </svg>
+            <div
+              className="relative flex h-3 w-24 cursor-pointer items-center"
+              onPointerDown={(e) => {
+                volDragging.current = true;
+                e.currentTarget.setPointerCapture(e.pointerId);
+                applyVolume(fraction(e), true);
+              }}
+              onPointerMove={(e) => volDragging.current && applyVolume(fraction(e))}
+              onPointerUp={(e) => {
+                volDragging.current = false;
+                applyVolume(fraction(e), true);
+              }}
+            >
+              <div className="h-1 w-full overflow-hidden rounded-full bg-white/25">
+                <div
+                  className="h-full rounded-full bg-white"
+                  style={{ width: `${volume * 100}%`, background: theme.accent || undefined }}
+                />
+              </div>
+              <div
+                className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-white shadow"
+                style={{ left: `${volume * 100}%` }}
+              />
+            </div>
+          </div>
           {/* Seek bar — only lives in the hover overlay; h-3 wrapper is the
               hit area, the visible track is h-1. */}
           <div
