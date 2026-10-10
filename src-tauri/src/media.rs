@@ -161,6 +161,20 @@ fn backend_loop(app: AppHandle) {
                 state.artist = props.Artist().unwrap_or_default().to_string();
                 state.album = props.AlbumTitle().unwrap_or_default().to_string();
 
+                // TEMP instrumentation (strip once the artist question is
+                // settled): what the provider actually publishes. SMTC has no
+                // collaborators field, so if a "feat." name is missing it was
+                // never sent — Tidal/Spotify report only the primary artist.
+                if state.title != last.title || state.artist != last.artist {
+                    eprintln!(
+                        "[wmp:props] title={:?} artist={:?} album_artist={:?} subtitle={:?}",
+                        state.title,
+                        state.artist,
+                        props.AlbumArtist().unwrap_or_default().to_string(),
+                        props.Subtitle().unwrap_or_default().to_string(),
+                    );
+                }
+
                 let aumid = session.SourceAppUserModelId().unwrap_or_default().to_string();
                 // ponytail: a session enumeration per loop iteration (~1ms,
                 // cadence is the 5s tick plus real media events). Cache it
