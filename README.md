@@ -41,7 +41,7 @@ integrates with Windows' native media keys, the widget can see and control it:
 
 It is a visualizer/controller, not a player: the widget reads metadata,
 artwork and timeline, and sends play/pause/skip back through the OS. It never
-touches audio itself.
+touches audio playback itself — the only thing it touches is volume.
 
 ### Why this exists
 
@@ -73,6 +73,15 @@ of this program.
 - **Hover controls** — previous / play-pause / next with instant feedback
   (optimistic UI + pending spinner), plus a click-to-seek bar that appears
   along the bottom edge on hover
+- **Volume, and it's the app's own** — the slider drives the media app's audio
+  sessions (the same slider as its entry in the Windows volume mixer), found by
+  matching the SMTC source app's AUMID to its WASAPI sessions; it falls back to
+  system volume when the app exposes none. SMTC has no volume API, so this is
+  Core Audio underneath — no extra permissions, still no dependencies. Arrow
+  keys work while the widget is focused: ←/→ seek, ↑/↓ volume
+- **Long titles don't get truncated away** — text that overflows drifts out to
+  its tail and back on a slow cycle (only as far as it needs to; text that fits
+  never moves), so the full name is readable at a glance
 - **System tray resident** — right-click for Show/Hide, Always on Top,
   Run at Startup, Dynamic Theme, Check for Updates, and Quit
 - **Sips resources** — fully event-driven (zero polling; SMTC change events
@@ -124,7 +133,7 @@ The core IPC surface is three messages: a `media-state` event (backend →
 frontend, lightweight metadata/timeline JSON), a `media-art` event (backend →
 frontend, fired only when the artwork bytes change, so the base64 payload
 never rides along with position ticks), and a `control` command (frontend →
-backend, `play_pause | next | prev | seek:<ms>`). A few smaller messages
+backend, `play_pause | next | prev | seek:<ms> | volume:<0..1>`). A few smaller messages
 handle startup state sync, the Dynamic Theme preference, and update checks —
 see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

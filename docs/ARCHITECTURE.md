@@ -12,7 +12,9 @@ frameless, always-on-top card that mirrors whatever media is playing system
 wide, and offers transport controls (prev / play-pause / next / seek) back to
 that media.
 
-It is **not a player**. It never touches audio, files, or playback state. It
+It is **not a player**. It never touches audio playback, files, or playback
+state — the single exception is volume, which it sets on the media app's audio
+sessions via WASAPI (§3.5). It
 is a *reader and remote* for the operating system's media infrastructure:
 
 ```
@@ -53,6 +55,7 @@ src-tauri/
     lib.rs      # Tauri setup: tray menu, autostart, settings persistence,
                 # updater wiring, command registry
     media.rs    # The entire media backend (the interesting file)
+    volume.rs   # Per-app volume via WASAPI sessions + system fallback
     main.rs     # Entry point, calls lib::run()
   tauri.conf.json  # Window config, bundle config, updater endpoint + pubkey
   capabilities/    # Webview permission grants (CSP lives in tauri.conf.json)
@@ -150,6 +153,8 @@ loop and pushes the authoritative state back to the UI. If a provider rejects
 a command (e.g. doesn't support seek), the next timeline tick snaps the UI
 back to reality.
 
+A fifth action, `volume:<0..1>`, is not SMTC at all — see §3.5.
+
 ### 3.4 The artwork state machine (the hard part)
 
 Naïve implementations are wrong because **providers lag their own artwork**.
@@ -189,6 +194,58 @@ Artwork decoding (`read_thumbnail`): `Thumbnail()` → `OpenReadAsync()` →
 `Size` → `DataReader.LoadAsync/ReadBytes` → sniff PNG/JPEG magic bytes →
 base64 `data:` URL.
 
+### 3.5 Volume (`src-tauri/src/volume.rs`)
+
+**SMTC has no volume API.** Its method list is transport-only (`TryPlayAsync`,
+`TryTogglePlayPauseAsync`, `TrySkipNext/PreviousAsync`,
+`TryChangePlaybackPositionAsync`, `TryChangePlaybackRateAsync`,
+`TryChangeShuffleActiveAsync`, `TryChangeAutoRepeatModeAsync`,
+`TryFastForward/RewindAsync`, …) — no `TrySetVolume*`, no mute. Volume comes
+from **Core Audio / WASAPI** instead.
+
+The write is one call (`ISimpleAudioVolume::SetMasterVolume`); the work is
+*identifying the session*. SMTC hands out only the source app's **AUMID**
+(`GlobalSystemMediaTransportControlsSession::SourceAppUserModelId()` —
+`Spotify.exe`, or `Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic` for
+packaged apps); audio sessions hand out only a **PID**. Bridging them:
+
+1. Enumerate sessions on the default render endpoint:
+   `CoCreateInstance(MMDeviceEnumerator)` →
+   `GetDefaultAudioEndpoint(eRender, eMultimedia)` →
+   `IAudioSessionManager2::GetSessionEnumerator`.
+2. Per session: `IAudioSessionControl2::GetProcessId` → compare the process
+   against the AUMID. Two tiers, because there is no single reliable key:
+   - **`GetApplicationUserModelId`** (the PID's own AUMID) — exact match, and
+     the only thing that works for packaged apps. Returns
+     `APPMODEL_ERROR_NO_APPLICATION` for plain desktop apps.
+   - **process image basename** via `QueryFullProcessImageNameW` — the
+     fallback for exactly those apps, whose AUMID is usually the exe name
+     (`Spotify.exe`) or a bare app name (`Chrome`).
+3. `ISimpleAudioVolume::SetMasterVolume` on **every** matching session — an app
+   can own several (browsers, multi-stream games); the Windows volume mixer
+   behaves the same way.
+4. **No match → system master volume** (`IAudioEndpointVolume::
+   SetMasterVolumeLevelScalar`). Some apps create no session at all until they
+   emit sound, so this is the honest answer rather than a silent no-op.
+
+`volume::get` runs the same walk for *reading*, so the slider reflects changes
+made in the Windows mixer. It is called once per backend loop iteration (cost:
+one enumeration, ~1ms) and rides the existing `MediaState` diff, so a volume
+change emits a state event only when it actually changed.
+
+COM needs no extra initialization: the backend thread is already MTA via
+`RoInitialize`, which *is* `CoInitializeEx(COINIT_MULTITHREADED)` internally —
+`CoCreateInstance` works on it as-is. Verified by the ecosystem: EarTrumpet,
+winmix, and the Windows 11 volume mixer all use this exact API family
+cross-process. (Microsoft's docs claim an app "cannot" change another app's
+session volume; that constraint is not enforced on the shared default device —
+the doc is describing intent, not the runtime.)
+
+Known limits, deliberately accepted: browser audio may come from a child
+process that carries neither the AUMID nor the expected image name (the system
+fallback catches it), and PIDs churn on app restart (we re-enumerate per action
+rather than cache).
+
 ---
 
 ## 4. IPC contract (backend ↔ UI)
@@ -203,7 +260,7 @@ top. Keeping each message small and diffed is deliberate (see §6).
   "available": true,       // a media session exists
   "title": "Song", "artist": "Artist", "album": "Album",
   "position_ms": 61234, "duration_ms": 214000,
-  "playing": true
+  "playing": true, "volume": 0.62
 }
 ```
 
@@ -220,8 +277,8 @@ causes zero traffic.
 ### `control` — Tauri command, UI → backend
 
 `invoke("control", { action })` where `action` is one of the transport
-strings in §3.3. Also enqueued as `Msg::Control`, triggering an immediate
-state re-read.
+strings in §3.3 (`play_pause | next | prev | seek:<ms> | volume:<0..1>`).
+Also enqueued as `Msg::Control`, triggering an immediate state re-read.
 
 ### `get_state` — Tauri command, UI → backend
 
@@ -288,6 +345,12 @@ Single component. Responsibilities:
 - **Position interpolation**: SMTC doesn't emit every second, so a 250ms
   local timer advances the position between real backend updates
   (`position + (now - last_update)` while playing).
+- **Arrow keys** map to the widget's two axes — ←/→ seek ∓5s, ↑/↓ volume
+  ±5% — the same mapping YouTube uses, so a horizontal slider under a
+  vertical key is already familiar. The single mount-time `window` listener
+  reads current values through an `arrows` ref, so it never re-registers.
+  Caveat: it only fires while the webview holds focus, i.e. after clicking
+  the card; a desktop widget can't claim arrow keys system-wide.
 
 Window dragging works because most elements carry `data-tauri-drag-region`;
 the hover overlay is `pointer-events-none` except the buttons and the seek
@@ -414,6 +477,10 @@ Debugging: the backend logs to stderr — visible in the terminal running
 control failures, update checks, settings corruption) log with a `[wmp]`
 prefix; temporary debug logging in the artwork machine has historically used
 `[wmp:art]` / `[wmp:emit]` and been stripped once fixes were confirmed.
+`[wmp:props]` currently prints every track's raw `title`/`artist`/
+`album_artist`/`subtitle` on change — it exists to answer "why is the
+collaborator missing", since SMTC exposes a single `Artist` string and some
+providers (Tidal, Spotify) publish only the primary one.
 
 Windows only today; the `#[cfg(target_os = "linux")]` stub in `media.rs`
 marks the MPRIS port's landing zone.
