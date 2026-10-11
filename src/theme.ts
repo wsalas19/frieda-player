@@ -57,6 +57,14 @@ const SIZE = 64;
 // ponytail: knobs — min YUV distance between the two picked colors; the
 // source's 0.2 on a 0..1 scale, re-tuned by eye against a cover test set.
 const DISTINCT = 0.25;
+// A bucket with every channel below this is black as far as the card is
+// concerned — near-black greys and shadows all land here.
+const DARK_CHANNEL = 48;
+// ...and this is how much of the cover has to be that black before we stop
+// arguing: a black cover, rather than a colorful one sitting in shadow.
+const DARK_SHARE = 0.7;
+
+const isBlack = ([r, g, b]: RGB) => Math.max(r, g, b) < DARK_CHANNEL;
 
 interface Bucket {
 	color: RGB;
@@ -181,8 +189,22 @@ export async function artTheme(art: string): Promise<ArtTheme> {
 			if (distinct.length === 3) break;
 		}
 	}
+
+	// Dark covers put black in the top bucket, and black as the card source
+	// flattens the card to the neutral — the cover's color is thrown away.
+	// When black really is most of the cover (DARK_SHARE) that neutral is the
+	// honest answer; when it isn't, black is only the shadow the color lives
+	// in, so the most common color that isn't black gets promoted instead.
+	// That one comes from the raw bucket list rather than the distinct three:
+	// DISTINCT also measures distance *from black*, so the case being fixed
+	// here — a dark navy holding 30% of the cover — is exactly what it drops.
+	const pixels = buckets.reduce((n, b) => n + b.n, 0);
+	const blacks = buckets.reduce((n, b) => n + (isBlack(b.color) ? b.n : 0), 0);
+	const color = buckets.find((b) => !isBlack(b.color));
+	const bg = blacks < pixels * DARK_SHARE && color ? color : distinct[0];
+
 	return finish(
-		distinct[0].color,
-		distinct.slice(1).map((b) => b.color),
+		bg.color,
+		distinct.slice(1).filter((b) => b !== bg).map((b) => b.color),
 	);
 }

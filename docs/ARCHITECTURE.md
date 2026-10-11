@@ -385,7 +385,18 @@ of it:
    least `DISTINCT`. The most common becomes the card; the next two are
    accent candidates. YUV (not RGB) distance matters: it approximates which
    colors *look* different to humans.
-3. **Finish** (`finish()`, shared with hand-authored colorways §5.3): the
+3. **Rescue dark covers**: black is usually the top bucket on dark artwork,
+   and black as the card source flattens the card to the neutral — every dark
+   cover ends up the same. So if the near-black buckets (`DARK_CHANNEL`, all
+   channels) hold **less** than `DARK_SHARE` (70%) of the pixels, the most
+   common *non*-black bucket is promoted to card source instead, and it leaves
+   the accent pool with it. At or above `DARK_SHARE` the cover really is black
+   and the neutral is kept — a mostly-black cover shouldn't be tinted by
+   whatever few bright pixels remain. Note the promoted bucket is read from the
+   raw bucket list, not the distinct three: `DISTINCT` measures distance *from
+   black* as well, so a dark navy second bucket — exactly the color worth
+   rescuing — is one of the things it drops.
+4. **Finish** (`finish()`, shared with hand-authored colorways §5.3): the
    card color is blended `BG_STRENGTH` (75%) over a dark base — the widget
    stays dark-anchored even on white covers — then nudged until either white
    or black text passes 4.5:1 WCAG contrast, and the text polarity
@@ -397,7 +408,8 @@ of it:
    to the text color (iTunes' own trick for monochrome covers).
 
 All WCAG math is ~15 lines of plain functions (`luminance`, `contrast`,
-`mix`). No dependency. The tuning knobs (`DISTINCT`, `BG_STRENGTH`, `SIZE`)
+`mix`). No dependency. The tuning knobs (`DISTINCT`, `BG_STRENGTH`, `SIZE`,
+`DARK_CHANNEL`, `DARK_SHARE`)
 are constants at the top of the file with a `ponytail:` note — calibration
 history lives in the git log. Failure of any step falls back to the neutral
 theme.

@@ -66,7 +66,10 @@ of this program.
   YUV color space) become the card color and the accent (progress bar,
   timestamps), nudged until they pass [WCAG](https://www.w3.org/TR/WCAG22/)
   contrast (≥ 4.5:1) against each other. Bright covers earn bright cards with
-  dark text; dark covers the reverse. Covers the algorithm can't feel right
+  dark text; dark covers the reverse. Dark artwork doesn't collapse to the
+  same flat black card either: if near-black isn't at least 70% of the cover,
+  the most common color that *isn't* black gets blended in, so the card stays
+  dark but keeps the cover's own hue. Covers the algorithm can't feel right
   about can be hand-tuned via curated **colorways** (per-album overrides,
   user-extensible). Toggle it in the tray (**Dynamic Theme**). No
   dependencies — just canvas math (`src/theme.ts`, `src/colorways.ts`)
