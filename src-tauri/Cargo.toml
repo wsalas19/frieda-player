@@ -2,7 +2,7 @@
 name = "frieda-player"
 # Keep in step with package.json (the Tauri config reads the app version from
 # there); this is only the crate's own metadata.
-version = "0.2.1"
+version = "0.3.1"
 description = "A featherweight, floating now-playing widget for Windows"
 authors = ["wsalas19"]
 edition = "2021"

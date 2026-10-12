@@ -99,8 +99,8 @@ of this program.
 
 Grab the latest installer from [Releases](https://github.com/wsalas19/frieda-player/releases):
 
-- `Frieda.Player_0.2.1_x64-setup.exe` (NSIS, recommended)
-- `Frieda.Player_0.2.1_x64_en-US.msi`
+- `Frieda.Player_0.3.1_x64-setup.exe` (NSIS, recommended)
+- `Frieda.Player_0.3.1_x64_en-US.msi`
 
 The app updates itself: the tray menu's **Check for Updates** offers new
 releases, and the card asks before anything is downloaded. Windows Defender
