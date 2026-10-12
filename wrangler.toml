@@ -1,0 +1,5 @@
+# Cloudflare Pages project config.
+# Lets both the Git integration and `wrangler pages deploy` find the site.
+# Rename `name` to whatever you call the Pages project.
+name = "frieda-player"
+pages_build_output_dir = "site"

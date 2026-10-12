@@ -12,20 +12,18 @@ Native SMTC integration · Rust + Tauri 2 · no Electron, no bloat
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-orange.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Platform-Windows-informational.svg)](#roadmap)
 
-<img src="docs/screenshot-playing.png" width="420" alt="Frieda Player mirroring a playing track, color-graded to the album artwork">
-<br>
-<em>Color-graded to the album artwork — artwork, metadata, animated progress.</em>
-
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshot-hovered.png" width="400" alt="Hover controls: previous, play-pause, next, and a click-to-seek bar"></td>
-    <td width="50%"><img src="docs/screenshot-empty.png" width="400" alt="Empty state when no media is playing"></td>
+    <td width="50%"><img src="docs/widget-death.png" width="400" alt="The Frieda Player card tinted red to Death's 'The Sound of Perseverance' artwork"></td>
+    <td width="50%"><img src="docs/widget-taylor.png" width="400" alt="The Frieda Player card tinted gold to Taylor Swift's 'Fearless (Taylor's Version)' artwork"></td>
   </tr>
   <tr>
-    <td align="center"><em>Hover controls + click-to-seek</em></td>
-    <td align="center"><em>Empty state</em></td>
+    <td align="center"><em>Death — red, graded to the cover</em></td>
+    <td align="center"><em>Taylor Swift — gold, graded to the cover</em></td>
   </tr>
 </table>
+<br>
+<em>Color-graded to the album art — artwork, metadata, animated progress.</em>
 
 </div>
 

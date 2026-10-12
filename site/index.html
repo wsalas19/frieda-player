@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0b0c" />
+
+    <!--
+      Currently the free Cloudflare Pages URL (matches `name` in wrangler.toml).
+      If the Pages project ends up named differently, update it here and in
+      sitemap.xml / robots.txt. Swap for a custom domain later if you add one.
+    -->
+    <title>Frieda Player — a featherweight now-playing widget for Windows</title>
+    <meta
+      name="description"
+      content="Frieda Player is a frameless, floating now-playing widget for Windows. It mirrors whatever is playing — artwork, metadata and timeline — and tints itself to the album art. Native SMTC, built with Rust + Tauri. Free and open source."
+    />
+    <link rel="canonical" href="https://frieda-player.pages.dev/" />
+
+    <!-- Open Graph / Twitter -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Frieda Player" />
+    <meta property="og:title" content="Frieda Player — your music, in full color" />
+    <meta
+      property="og:description"
+      content="A frameless floating now-playing widget for Windows that tints itself to your album art. Native SMTC, no Electron bloat."
+    />
+    <meta property="og:url" content="https://frieda-player.pages.dev/" />
+    <meta property="og:image" content="https://frieda-player.pages.dev/assets/widget-death.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Frieda Player — your music, in full color" />
+    <meta
+      name="twitter:description"
+      content="A frameless floating now-playing widget for Windows that tints itself to your album art."
+    />
+    <meta name="twitter:image" content="https://frieda-player.pages.dev/assets/widget-death.png" />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+    <link rel="stylesheet" href="styles.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Frieda Player",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Windows 10, Windows 11",
+        "description": "A frameless, floating now-playing widget for Windows that mirrors SMTC media and tints itself to the album art.",
+        "url": "https://frieda-player.pages.dev/",
+        "downloadUrl": "https://github.com/wsalas19/frieda-player/releases/latest",
+        "softwareVersion": "0.3.1",
+        "license": "https://opensource.org/licenses/MIT",
+        "image": "https://frieda-player.pages.dev/assets/widget-death.png",
+        "author": { "@type": "Person", "name": "wsalas19" },
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
+  </head>
+
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <!-- ───────────────────────── nav ───────────────────────── -->
+    <header class="nav" id="nav">
+      <div class="nav-inner">
+        <a class="brand" href="#top" aria-label="Frieda Player home">
+          <img src="assets/logo.png" alt="" width="28" height="28" />
+          <span>Frieda<b>Player</b></span>
+        </a>
+        <nav class="nav-links" id="nav-links" aria-label="Primary">
+          <a href="#how">How it works</a>
+          <a href="#features">Features</a>
+          <a href="#color">Color</a>
+          <a href="#works">Works with</a>
+          <a href="#roadmap">Roadmap</a>
+        </nav>
+        <div class="nav-cta">
+          <a
+            class="btn btn-primary btn-sm"
+            data-download
+            href="https://github.com/wsalas19/frieda-player/releases/latest"
+          >
+            Download
+          </a>
+          <button
+            class="nav-toggle"
+            id="nav-toggle"
+            aria-label="Menu"
+            aria-expanded="false"
+            aria-controls="nav-links"
+          >
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ───────────────────────── hero ───────────────────────── -->
+      <section class="hero" id="top">
+        <div class="glow glow-a" aria-hidden="true"></div>
+        <div class="glow glow-b" aria-hidden="true"></div>
+        <div class="hero-inner">
+          <p class="pill">
+            <span class="dot" aria-hidden="true"></span>
+            Now playing · Windows 10 &amp; 11
+          </p>
+          <h1>
+            Your music,<br />
+            <span class="grad">in full color.</span>
+          </h1>
+          <p class="lede">
+            A featherweight, frameless widget that mirrors whatever is playing on Windows — artwork,
+            metadata and timeline — and tints itself to the album art. Native SMTC, built with
+            Rust&nbsp;+&nbsp;Tauri. No Electron. No bloat.
+          </p>
+          <div class="cta-row">
+            <a
+              class="btn btn-primary"
+              data-download
+              href="https://github.com/wsalas19/frieda-player/releases/latest"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="ico">
+                <path d="M12 3v10.6A4 4 0 1014 17V7h4V3h-6z" />
+              </svg>
+              Download for Windows
+            </a>
+            <a
+              class="btn btn-ghost"
+              href="https://github.com/wsalas19/frieda-player"
+              rel="noopener"
+            >
+              View on GitHub
+            </a>
+          </div>
+          <p class="fineprint">
+            Free &amp; open source · MIT · <span data-version>latest release</span>
+          </p>
+
+          <!-- hero visual -->
+          <div class="stage">
+            <div class="stage-bg" aria-hidden="true"></div>
+            <div class="widget-float">
+              <div class="widget-shadow" aria-hidden="true"></div>
+              <img
+                class="widget-shot"
+                src="assets/widget-death.png"
+                width="896"
+                height="336"
+                alt="Frieda Player mirroring Death’s “Flesh and the Power It Holds”, its card tinted red to the album art"
+              />
+              <div class="eq" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────────── how ───────────────────────── -->
+      <section class="section" id="how">
+        <p class="eyebrow">How it works</p>
+        <h2>It listens to Windows, not to you.</h2>
+        <p class="sub">
+          No window-title scraping, no media-key hooks. Frieda rides the same feed behind the
+          Windows media flyout.
+        </p>
+        <ol class="steps">
+          <li class="card step">
+            <span class="num">01</span>
+            <h3>Play anything</h3>
+            <p>
+              Spotify, Tidal, Apple Music, a browser tab, foobar2000 — if it talks to Windows' media
+              keys, Frieda can see and control it.
+            </p>
+          </li>
+          <li class="card step">
+            <span class="num">02</span>
+            <h3>It reads natively</h3>
+            <p>
+              The Windows Media Transport Controls API, event-driven. Artwork, title, artist, album
+              and timeline — no polling, no guesswork.
+            </p>
+          </li>
+          <li class="card step">
+            <span class="num">03</span>
+            <h3>It wears the art</h3>
+            <p>
+              Two perceptually distinct colors are pulled from the cover and nudged to readable
+              contrast, so the card matches the mood of the music.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <!-- ───────────────────────── features ───────────────────────── -->
+      <section class="section" id="features">
+        <p class="eyebrow">Features</p>
+        <h2>A small card that does the small things well.</h2>
+        <p class="sub">Everything you need to see and steer what's playing — nothing you don't.</p>
+
+        <div class="grid features">
+          <article class="card feature">
+            <h3><span class="chip">◆</span> Frameless &amp; floating</h3>
+            <p>
+              A transparent card that sits on your desktop, drags anywhere, always-on-top by
+              default.
+            </p>
+          </article>
+          <article class="card feature">
+            <h3><span class="chip">♪</span> Live metadata</h3>
+            <p>
+              Artwork, title, artist · album and a smoothly animated progress bar that keeps up.
+            </p>
+          </article>
+          <article class="card feature">
+            <h3><span class="chip">◐</span> Color-graded to the art</h3>
+            <p>
+              The card tints itself to the cover — bright covers earn bright cards with dark text,
+              and vice-versa.
+            </p>
+          </article>
+          <article class="card feature">
+            <h3><span class="chip">⏯</span> Hover controls</h3>
+            <p>
+              Previous / play-pause / next with instant optimistic feedback, plus a click-to-seek
+              bar along the bottom.
+            </p>
+          </article>
+          <article class="card feature">
+            <h3><span class="chip">🔊</span> Per-app volume</h3>
+            <p>
+              The slider drives the media app's own audio session in the Windows volume mixer — not
+              the system master.
+            </p>
+          </article>
+          <article class="card feature">
+            <h3><span class="chip">↔</span> Titles that keep moving</h3>
+            <p>
+              Long names drift out to their tail and back on a slow cycle, so the full title is
+              readable at a glance.
+            </p>
+          </article>
+          <article class="card feature">
+            <h3><span class="chip">⧉</span> Copy as image</h3>
+            <p>
+              One click redraws the card to a PNG on your clipboard — the shortcut for sharing what
+              you're listening to.
+            </p>
+          </article>
+          <article class="card feature">
+            <h3><span class="chip">⌨</span> Keyboard shortcuts</h3>
+            <p>While the widget is focused: ←/→ seek, ↑/↓ volume. Quiet, quick, out of the way.</p>
+          </article>
+          <article class="card feature">
+            <h3><span class="chip">🗂</span> Tray resident</h3>
+            <p>
+              Show / hide, always-on-top, run at startup, dynamic theme and update checks live in
+              the system tray.
+            </p>
+          </article>
+          <article class="card feature">
+            <h3><span class="chip">🪶</span> Sips resources</h3>
+            <p>
+              Fully event-driven and written in Rust + Tauri — a fraction of the footprint of an
+              Electron app.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ───────────────────────── color ───────────────────────── -->
+      <section class="section color-section" id="color">
+        <div class="color-grid">
+          <div class="color-copy">
+            <p class="eyebrow">The signature</p>
+            <h2>Album art is part of the music.</h2>
+            <p class="sub">
+              Frieda's color grading is inspired by Panic's iTunes&nbsp;11 algorithm: the two most
+              common <em>perceptually distinct</em> colors — compared in the YUV space — become the
+              card and the accent, nudged until they pass WCAG contrast (≥ 4.5:1).
+            </p>
+            <ul class="ticks">
+              <li>Bright covers earn bright cards with dark text; dark covers the reverse.</li>
+              <li>Dark artwork doesn't collapse to flat black — its own hue is blended back in.</li>
+              <li>
+                Covers the algorithm can't feel right about can be hand-tuned with curated
+                colorways.
+              </li>
+            </ul>
+          </div>
+          <div class="color-visual card">
+            <img
+              src="assets/widget-taylor.png"
+              width="896"
+              height="336"
+              loading="lazy"
+              alt="The Frieda Player card for “Fearless (Taylor’s Version)”, tinted to the album artwork"
+            />
+            <p class="palette-caption">
+              Extracted from <strong>Fearless (Taylor’s Version)</strong> — one cover, one palette.
+            </p>
+            <div class="palette" aria-hidden="true">
+              <span style="--c: #533922"><b>card</b></span>
+              <span style="--c: #fafafa"><b>text</b></span>
+              <span style="--c: #d7ac65"><b>accent</b></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────────── works with ───────────────────────── -->
+      <section class="section" id="works">
+        <p class="eyebrow">Works with</p>
+        <h2>Anything that speaks to Windows' media keys.</h2>
+        <p class="sub">
+          Frieda is a visualizer and controller, not a player — it never touches the audio itself.
+        </p>
+        <ul class="chips" role="list">
+          <li>Spotify</li>
+          <li>Tidal</li>
+          <li>Apple Music</li>
+          <li>Amazon Music</li>
+          <li>YouTube Music</li>
+          <li>SoundCloud</li>
+          <li>Media Player</li>
+          <li>foobar2000</li>
+          <li>VLC</li>
+          <li>Microsoft Edge</li>
+          <li>Google Chrome</li>
+          <li>Brave</li>
+          <li>Vivaldi</li>
+          <li>Opera</li>
+          <li>Dopamine</li>
+          <li>MusicBee</li>
+        </ul>
+        <p class="chips-note">…and every other app with native SMTC support.</p>
+      </section>
+
+      <!-- ───────────────────────── philosophy ───────────────────────── -->
+      <section class="section quote-section">
+        <blockquote>
+          <p>
+            “Music is more than sound waves on your ears. Album artwork is part of the music — the
+            mood the artist wanted you in before the first note played.”
+          </p>
+          <cite>— from the Frieda Player README</cite>
+        </blockquote>
+      </section>
+
+      <!-- ───────────────────────── roadmap ───────────────────────── -->
+      <section class="section" id="roadmap">
+        <p class="eyebrow">Roadmap</p>
+        <h2>Where it's been, where it's going.</h2>
+        <div class="roadmap">
+          <div class="card lane">
+            <h3><span class="tag tag-done">Shipped</span></h3>
+            <ul>
+              <li>Windows SMTC backend — metadata, artwork, controls, tray, autostart</li>
+              <li>Custom app &amp; tray icon; signed auto-update channel</li>
+              <li>CI: Windows installers + updater artifacts built on tag</li>
+            </ul>
+          </div>
+          <div class="card lane">
+            <h3><span class="tag tag-next">Next</span></h3>
+            <ul>
+              <li>Authenticode code signing — removes the SmartScreen warning on install</li>
+            </ul>
+          </div>
+          <div class="card lane">
+            <h3><span class="tag tag-plan">Planned</span></h3>
+            <ul>
+              <li>Linux via MPRIS behind the existing OS seam</li>
+              <li>WebKitGTK frontend; <code>.AppImage</code> / <code>.deb</code> artifacts</li>
+              <li>Linux artifacts built in CI on tag</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────────── cta ───────────────────────── -->
+      <section class="section cta-section">
+        <div class="card cta-card">
+          <div class="glow glow-c" aria-hidden="true"></div>
+          <img src="assets/logo.png" alt="" width="56" height="56" class="cta-logo" />
+          <h2>Give your music a face.</h2>
+          <p class="sub">Free, open source, and small. Download it and press play.</p>
+          <div class="cta-row">
+            <a
+              class="btn btn-primary"
+              data-download
+              href="https://github.com/wsalas19/frieda-player/releases/latest"
+            >
+              Download for Windows
+            </a>
+            <a
+              class="btn btn-ghost"
+              href="https://github.com/wsalas19/frieda-player"
+              rel="noopener"
+            >
+              View on GitHub
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── footer ───────────────────────── -->
+    <footer class="footer">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="#top">
+            <img src="assets/logo.png" alt="" width="26" height="26" />
+            <span>Frieda<b>Player</b></span>
+          </a>
+          <p>A featherweight, floating now-playing widget for Windows.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div>
+            <h4>Product</h4>
+            <a href="#features">Features</a>
+            <a href="#roadmap">Roadmap</a>
+            <a data-download href="https://github.com/wsalas19/frieda-player/releases/latest"
+              >Download</a
+            >
+          </div>
+          <div>
+            <h4>Resources</h4>
+            <a href="https://github.com/wsalas19/frieda-player" rel="noopener">GitHub</a>
+            <a href="https://github.com/wsalas19/frieda-player/releases" rel="noopener">Releases</a>
+            <a
+              href="https://github.com/wsalas19/frieda-player/blob/main/docs/ARCHITECTURE.md"
+              rel="noopener"
+              >Architecture</a
+            >
+          </div>
+          <div>
+            <h4>Legal</h4>
+            <a href="https://github.com/wsalas19/frieda-player/blob/main/LICENSE" rel="noopener"
+              >MIT License</a
+            >
+          </div>
+        </nav>
+      </div>
+      <p class="footer-fine">
+        © <span id="year">2026</span> wsalas19 · Frieda Player is not affiliated with any media
+        provider.
+      </p>
+    </footer>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

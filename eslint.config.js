@@ -30,4 +30,16 @@ export default tseslint.config(
       globals: { process: "readonly", console: "readonly" },
     },
   },
+  {
+    // Landing-page script (browser).
+    files: ["site/**/*.js"],
+    languageOptions: {
+      globals: {
+        window: "readonly",
+        document: "readonly",
+        fetch: "readonly",
+        HTMLAnchorElement: "readonly",
+      },
+    },
+  },
 );

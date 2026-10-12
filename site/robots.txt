@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://frieda-player.pages.dev/sitemap.xml
