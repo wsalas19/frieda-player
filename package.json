@@ -12,6 +12,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "release": "node scripts/release.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -23,4 +23,11 @@ export default tseslint.config(
       complexity: ["warn", 15],
     },
   },
+  {
+    // Node CLI scripts.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: { process: "readonly", console: "readonly" },
+    },
+  },
 );

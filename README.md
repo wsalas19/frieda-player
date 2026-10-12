@@ -187,6 +187,8 @@ cargo clippy          # Rust lints        (in src-tauri/)
 cargo test            # Rust tests        (in src-tauri/)
 ```
 
+Releasing is scripted — see [docs/RELEASING.md](docs/RELEASING.md) (`npm run release -- patch`).
+
 Release build (installs land in `src-tauri/target/release/bundle/`):
 
 ```bash
