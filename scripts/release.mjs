@@ -41,6 +41,11 @@ const die = (msg) => {
 function run(cmd, cmdArgs, opts = {}) {
   return execFileSync(cmd, cmdArgs, { stdio: "inherit", cwd: root, ...opts });
 }
+// npm is a .cmd shim on Windows, which execFile can't launch directly — go
+// through the shell so it resolves on every platform.
+function runNpm(npmArgs) {
+  return execFileSync("npm", npmArgs, { stdio: "inherit", cwd: root, shell: true });
+}
 function capture(cmd, cmdArgs, opts = {}) {
   return execFileSync(cmd, cmdArgs, { encoding: "utf8", cwd: root, ...opts }).trim();
 }
@@ -71,6 +76,13 @@ if (next === current) die(`already at v${current}; nothing to bump.`);
 const tag = `v${next}`;
 
 // Refuse a dirty tree so the release commit contains only the version bump.
+// Refresh the stat cache first: editors/prettier can touch a file's mtime
+// without changing its content, which would otherwise read as dirty.
+try {
+  capture("git", ["update-index", "-q", "--refresh"]);
+} catch {
+  /* exits non-zero when there are real changes; `status` below is authoritative */
+}
 const dirty = capture("git", ["status", "--porcelain"]);
 if (dirty) die(`working tree is dirty — commit or stash first:\n\n${dirty}`);
 
@@ -84,8 +96,8 @@ log(`\nReleasing ${current} → ${next} (tag ${tag})${dryRun ? "  [dry-run]" : "
 
 if (!noCheck && !dryRun) {
   log("• lint + tests…");
-  run("npm", ["run", "lint"]);
-  run("npm", ["test"]);
+  runNpm(["run", "lint"]);
+  runNpm(["test"]);
 }
 
 // 1. package.json (source of truth).
