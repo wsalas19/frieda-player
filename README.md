@@ -99,12 +99,13 @@ of this program.
 
 Grab the latest installer from [Releases](https://github.com/wsalas19/frieda-player/releases):
 
-- `Frieda.Player_0.2.0_x64-setup.exe` (NSIS, recommended)
-- `Frieda.Player_0.2.0_x64_en-US.msi`
+- `Frieda.Player_0.2.1_x64-setup.exe` (NSIS, recommended)
+- `Frieda.Player_0.2.1_x64_en-US.msi`
 
-The app updates itself: new releases are picked up through the tray menu's
-**Check for Updates**. Windows Defender SmartScreen may warn about an unsigned
-beta installer — expected until Authenticode signing lands (see roadmap).
+The app updates itself: the tray menu's **Check for Updates** offers new
+releases, and the card asks before anything is downloaded. Windows Defender
+SmartScreen may warn about an unsigned beta installer — expected until
+Authenticode signing lands (see roadmap).
 
 Or build from source (below).
 
@@ -172,6 +173,18 @@ and **VS Build Tools** with the "Desktop development with C++" workload.
 ```bash
 npm install        # frontend deps
 npm run tauri dev  # hot-reload dev session
+```
+
+Checks (also run in CI on every push/PR):
+
+```bash
+npm run lint          # ESLint (incl. a cyclomatic-complexity budget)
+npm run format:check  # Prettier
+npm test              # Vitest unit tests
+npm run build         # tsc + vite production build
+cargo fmt --check     # Rust formatting   (in src-tauri/)
+cargo clippy          # Rust lints        (in src-tauri/)
+cargo test            # Rust tests        (in src-tauri/)
 ```
 
 Release build (installs land in `src-tauri/target/release/bundle/`):

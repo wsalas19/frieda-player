@@ -4,22 +4,16 @@
  * This duplicates the card's look in canvas code on purpose: a real
  * screenshot (WebView2 CapturePreview) needs COM plumbing and can't reach the
  * clipboard without a PNG→DIB conversion, and the print dialog we removed is
- * not a substitute. Keep these numbers in step with App.tsx's layout.
+ * not a substitute. Geometry comes from src/layout.ts; keep that in step with
+ * App.tsx's classes.
  *
  * The output is the card alone — no hover overlay — on a transparent margin,
  * so it can be pasted straight into a chat without a frame to crop off.
  */
 import type { ArtTheme } from "./theme";
+import { CARD, FONT } from "./layout";
 
-const W = 400; // the window's configured logical size
-const H = 120;
-const SCALE = 2; // retina crispness
-const MARGIN = 24; // transparent breathing room around the card
-const PAD = 8; // m-2
-const ART_W = 96; // w-24
-const RADIUS = 16; // rounded-2xl
-const ART_RADIUS = 12; // rounded-xl
-const FONT = "system-ui, -apple-system, sans-serif";
+const { W, H, SCALE, MARGIN, PAD, ART_W, RADIUS, ART_RADIUS } = CARD;
 
 type Card = {
   title: string;
@@ -36,7 +30,14 @@ const mmss = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
-function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+function roundRect(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
   g.beginPath();
   g.moveTo(x + r, y);
   g.arcTo(x + w, y, x + w, y + h, r);

@@ -1,8 +1,10 @@
 [package]
-name = "wmp-project"
+name = "frieda-player"
+# Keep in step with package.json (the Tauri config reads the app version from
+# there); this is only the crate's own metadata.
 version = "0.2.1"
-description = "A Tauri App"
-authors = ["you"]
+description = "A featherweight, floating now-playing widget for Windows"
+authors = ["wsalas19"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,7 +13,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "wmp_project_lib"
+name = "frieda_player_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

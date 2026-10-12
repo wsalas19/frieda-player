@@ -6,7 +6,6 @@ import { loadColorways, normalizeKey, themeFor, type Colorway } from "./colorway
 import { copyCard } from "./share";
 import { getVersion } from "@tauri-apps/api/app";
 
-
 interface MediaState {
   available: boolean;
   title: string;
@@ -39,7 +38,11 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 /** Position of a click/drag along an element's width, as 0..1. */
 function fraction(e: React.PointerEvent | React.MouseEvent): number {
-  return clamp((e.clientX - e.currentTarget.getBoundingClientRect().left) / e.currentTarget.clientWidth, 0, 1);
+  return clamp(
+    (e.clientX - e.currentTarget.getBoundingClientRect().left) / e.currentTarget.clientWidth,
+    0,
+    1,
+  );
 }
 
 function PlayIcon({ playing }: { playing: boolean }) {
@@ -58,9 +61,65 @@ function PlayIcon({ playing }: { playing: boolean }) {
 function Spinner() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5 animate-spin">
-      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" className="opacity-25" />
-      <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        className="opacity-25"
+      />
+      <path
+        d="M21 12a9 9 0 0 0-9-9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
     </svg>
+  );
+}
+
+/** Update prompt: shown when the backend has an update ready and is waiting for
+ *  the user to confirm. Renders nothing when there is no pending update. */
+function UpdateBanner({
+  version,
+  onUpdate,
+  onLater,
+}: {
+  version: string | null;
+  onUpdate: () => void;
+  onLater: () => void;
+}) {
+  if (!version) return null;
+  return (
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-2xl bg-neutral-900/95 px-3 text-center text-white">
+      <div className="text-xs">Update v{version} is available.</div>
+      <div className="flex gap-2">
+        <button
+          onClick={onUpdate}
+          className="cursor-pointer rounded-md bg-white px-3 py-1 text-[11px] font-semibold text-neutral-900 hover:bg-white/90 active:scale-95"
+        >
+          Update &amp; Restart
+        </button>
+        <button
+          onClick={onLater}
+          className="cursor-pointer rounded-md bg-white/10 px-3 py-1 text-[11px] text-white/80 hover:bg-white/20 active:scale-95"
+        >
+          Later
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Toast({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <div className="absolute top-2 right-3 rounded-md bg-[#56565a] px-3 py-1 text-[10px] text-white/80">
+      {message}
+    </div>
   );
 }
 
@@ -73,7 +132,13 @@ function Marquee({ text, className = "" }: { text: string; className?: string })
   useEffect(() => {
     const b = box.current;
     const i = inner.current;
-    if (b && i) setShift(Math.max(0, i.scrollWidth - b.clientWidth));
+    if (!b || !i) return;
+    const measure = () => setShift(Math.max(0, i.scrollWidth - b.clientWidth));
+    measure();
+    // Re-measure when the box resizes, not just when the text changes.
+    const ro = new ResizeObserver(measure);
+    ro.observe(b);
+    return () => ro.disconnect();
   }, [text]);
 
   return (
@@ -100,7 +165,7 @@ function Marquee({ text, className = "" }: { text: string; className?: string })
 }
 
 export default function App() {
-	const [state, setState] = useState<MediaState>(IDLE);
+  const [state, setState] = useState<MediaState>(IDLE);
   const [version, setVersion] = useState("");
   // Artwork lives in its own event/state so fat base64 payloads never ride
   // along with lightweight position/metadata ticks.
@@ -111,6 +176,9 @@ export default function App() {
   // Hand-authored per-album colorways (embedded + user file).
   const [colorways, setColorways] = useState<Map<string, Colorway> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  // Version offered by the updater, awaiting the user's go-ahead.
+  const [updateReady, setUpdateReady] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pendingTimer = useRef<number | null>(null);
   // Locally interpolated position so the bar moves smoothly between backend ticks.
@@ -120,6 +188,8 @@ export default function App() {
   const [volume, setVolume] = useState(1);
   const volAt = useRef(0);
   const volDragging = useRef(false);
+  // The system-volume fallback is worth saying once, not on every write.
+  const volumeFbShown = useRef(false);
   // Latest values for the global key handler, which must not re-register.
   const arrows = useRef({ position: 0, duration: 0, volume: 1 });
   const lastRef = useRef<{ at: number; position_ms: number; playing: boolean }>({
@@ -129,8 +199,9 @@ export default function App() {
   });
 
   const notify = (msg: string, ms = 3000) => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
     setToast(msg);
-    window.setTimeout(() => setToast(null), ms);
+    toastTimer.current = window.setTimeout(() => setToast(null), ms);
   };
 
   /** Copies the card to the clipboard as a PNG — the share path that replaces
@@ -157,6 +228,17 @@ export default function App() {
       });
   };
 
+  /** User confirmed the offered update: download, verify and install. On
+   *  Windows the installer relaunches the app itself. */
+  const doUpdate = () => {
+    setUpdateReady(null);
+    notify("Downloading update — the app will restart.", 5000);
+    invoke("install_update").catch((e) => {
+      if (import.meta.env.DEV) console.error(e);
+      notify("Update failed — try again later.", 5000);
+    });
+  };
+
   useEffect(() => {
     // Startup sync: the backend may have emitted before this listener existed.
     invoke<{ state: MediaState; art: string | null } | null>("get_state").then((snap) => {
@@ -173,11 +255,13 @@ export default function App() {
       }
     });
     const unArt = listen<string | null>("media-art", (e) => setArt(e.payload));
-    const unThemePref = listen<boolean>("theme-preference", (e) =>
-      setEnableTheme(e.payload),
-    );
-    invoke<boolean>("get_theme_pref").then(setEnableTheme).catch(() => {});
-    loadColorways().then(setColorways).catch(() => {});
+    const unThemePref = listen<boolean>("theme-preference", (e) => setEnableTheme(e.payload));
+    invoke<boolean>("get_theme_pref")
+      .then(setEnableTheme)
+      .catch(() => {});
+    loadColorways()
+      .then(setColorways)
+      .catch(() => {});
     const un = listen<MediaState>("media-state", (e) => {
       const s = e.payload;
       lastRef.current = { at: Date.now(), position_ms: s.position_ms, playing: s.playing };
@@ -189,13 +273,23 @@ export default function App() {
       setPending(false);
     });
     const unUpdates = listen<string | null>("check-updates", (e) => {
-      if (e.payload) return notify(`Downloading update v${e.payload} — the app will restart.`, 5000);
-      notify("You are on the latest version.");
+      // Some(version) = an update is ready and awaiting confirmation.
+      if (e.payload) setUpdateReady(e.payload);
+      else notify("You are on the latest version.");
     });
     const unUpdateErr = listen("check-updates-error", () => {
       notify("Update check failed — try again later.", 5000);
     });
-    getVersion().then((v) => setVersion(`v${v}`)).catch(() => {});
+    // Backend had no audio session for the app and touched the system volume.
+    // Say it once per session, briefly, so a volume drag can't spam it.
+    const unVolFb = listen<string>("volume-fallback", () => {
+      if (volumeFbShown.current) return;
+      volumeFbShown.current = true;
+      notify("System volume (no app session)", 2000);
+    });
+    getVersion()
+      .then((v) => setVersion(`v${v}`))
+      .catch(() => {});
 
     const timer = setInterval(() => {
       const { at, position_ms, playing } = lastRef.current;
@@ -207,7 +301,9 @@ export default function App() {
       unThemePref.then((f) => f());
       unUpdateErr.then((f) => f());
       unUpdates.then((f) => f());
+      unVolFb.then((f) => f());
       clearInterval(timer);
+      if (toastTimer.current) window.clearTimeout(toastTimer.current);
     };
   }, []);
 
@@ -303,21 +399,12 @@ export default function App() {
     <div
       data-tauri-drag-region
       className="group relative flex h-screen w-screen items-stretch rounded-2xl border border-white/10 bg-neutral-900/80 text-white shadow-2xl backdrop-blur-xl transition-colors duration-500"
-      style={
-        theme.background
-          ? { background: theme.background, color: theme.text }
-          : undefined
-      }
+      style={theme.background ? { background: theme.background, color: theme.text } : undefined}
     >
       {/* Artwork */}
       <div data-tauri-drag-region className="m-2 h-[calc(100%-1rem)] shrink-0">
         {art ? (
-          <img
-            src={art}
-            alt=""
-            draggable={false}
-            className="h-full w-24 rounded-xl object-cover"
-          />
+          <img src={art} alt="" draggable={false} className="h-full w-24 rounded-xl object-cover" />
         ) : (
           <div
             className={`flex h-full w-24 items-center justify-center rounded-xl bg-white/5 ${
@@ -332,7 +419,10 @@ export default function App() {
       </div>
 
       {/* Info + progress */}
-      <div data-tauri-drag-region className="flex min-w-0 flex-1 flex-col justify-center gap-1 py-2 pr-3">
+      <div
+        data-tauri-drag-region
+        className="flex min-w-0 flex-1 flex-col justify-center gap-1 py-2 pr-3"
+      >
         {state.available ? (
           <>
             <Marquee text={state.title || "Unknown track"} className="text-sm font-semibold" />
@@ -370,6 +460,7 @@ export default function App() {
             onClick={() => send("prev")}
             className="pointer-events-auto -m-2 cursor-pointer rounded-full p-3.5 text-white/80 hover:bg-white/10 hover:text-white active:scale-95"
             title="Previous"
+            aria-label="Previous track"
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current">
               <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
@@ -379,6 +470,7 @@ export default function App() {
             onClick={() => send("play_pause")}
             className="pointer-events-auto -m-1 cursor-pointer rounded-full bg-white p-4 text-neutral-900 transition-transform hover:scale-105 active:scale-95"
             title="Play / Pause"
+            aria-label={state.playing ? "Pause" : "Play"}
           >
             {pending ? <Spinner /> : <PlayIcon playing={state.playing} />}
           </button>
@@ -386,6 +478,7 @@ export default function App() {
             onClick={() => send("next")}
             className="pointer-events-auto -m-2 cursor-pointer rounded-full p-3.5 text-white/80 hover:bg-white/10 hover:text-white active:scale-95"
             title="Next"
+            aria-label="Next track"
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current">
               <path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" />
@@ -398,6 +491,7 @@ export default function App() {
             onClick={share}
             className="pointer-events-auto absolute top-3 right-4 cursor-pointer rounded-full p-1.5 text-white/60 hover:bg-white/10 hover:text-white active:scale-95"
             title="Copy card as image"
+            aria-label="Copy card as image"
           >
             <svg
               viewBox="0 0 24 24"
@@ -418,11 +512,19 @@ export default function App() {
               media app's own audio sessions (system volume if it has none). */}
           {/* h-7 matches the share button's box (p-1.5 + h-4 icon), so the two
               top-corner groups share a centre line. */}
-          <div className="pointer-events-auto absolute top-3 left-4 flex h-7 items-center gap-2" title="Volume">
+          <div
+            className="pointer-events-auto absolute top-3 left-4 flex h-7 items-center gap-2"
+            title="Volume"
+          >
             <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current opacity-60">
               <path d="M5 9v6h3.5L13 19V5L8.5 9H5zm11.5 3a4.5 4.5 0 0 0-2-3.7v7.4a4.5 4.5 0 0 0 2-3.7z" />
             </svg>
             <div
+              role="slider"
+              aria-label="Volume"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(volume * 100)}
               className="relative flex h-3 w-24 cursor-pointer items-center"
               onPointerDown={(e) => {
                 volDragging.current = true;
@@ -450,6 +552,11 @@ export default function App() {
           {/* Seek bar — only lives in the hover overlay; h-3 wrapper is the
               hit area, the visible track is h-1. */}
           <div
+            role="slider"
+            aria-label="Seek"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(state.duration_ms / 1000)}
+            aria-valuenow={Math.round(position / 1000)}
             onClick={seek}
             className="pointer-events-auto absolute inset-x-4 bottom-3 flex h-3 cursor-pointer items-center"
           >
@@ -461,18 +568,20 @@ export default function App() {
             </div>
           </div>
         </div>
-			)}
+      )}
 
       {/* Version tag fades out on hover: the share button takes that corner. */}
       <div className="absolute top-2 right-3 text-[9px] tabular-nums opacity-75 transition-opacity group-hover:opacity-0">
         {version}
       </div>
 
-      {toast && (
-        <div className="absolute top-2 right-3 rounded-md bg-[#56565a] px-3 py-1 text-[10px] text-white/80">
-          {toast}
-        </div>
-      )}
+      <UpdateBanner
+        version={updateReady}
+        onUpdate={doUpdate}
+        onLater={() => setUpdateReady(null)}
+      />
+
+      <Toast message={toast} />
     </div>
   );
 }

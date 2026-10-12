@@ -1,4 +1,5 @@
 mod media;
+mod util;
 mod volume;
 
 use std::sync::Mutex;
@@ -12,6 +13,10 @@ use tauri::{
 // tray checkbox and the frontend agree across restarts. ponytail: std::fs
 // instead of tauri-plugin-store; swap if real settings accumulate.
 static THEME_ENABLED: Mutex<bool> = Mutex::new(true);
+
+// Update found by "Check for Updates", held until the user confirms (or
+// dismisses) it in the UI. `None` = nothing pending.
+static PENDING_UPDATE: Mutex<Option<tauri_plugin_updater::Update>> = Mutex::new(None);
 
 fn data_file(app: &AppHandle, name: &str) -> Option<std::path::PathBuf> {
     Some(app.path().app_data_dir().ok()?.join(name))
@@ -66,7 +71,7 @@ fn get_state() -> Option<media::Snapshot> {
 
 #[tauri::command]
 fn get_theme_pref() -> bool {
-    *THEME_ENABLED.lock().unwrap()
+    *util::lock(&THEME_ENABLED)
 }
 
 // User/community colorway additions, same JSON schema as the embedded file.
@@ -74,6 +79,20 @@ fn get_theme_pref() -> bool {
 fn read_user_colorways(app: AppHandle) -> Option<String> {
     let path = data_file(&app, "colorways.json")?;
     std::fs::read_to_string(path).ok()
+}
+
+/// Downloads, verifies and installs the update the user confirmed. On Windows
+/// the installer relaunches the app itself; on error the message is returned so
+/// the UI can report it.
+#[tauri::command]
+async fn install_update() -> Result<(), String> {
+    let Some(update) = util::lock(&PENDING_UPDATE).take() else {
+        return Err("no update is pending".into());
+    };
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -88,16 +107,33 @@ pub fn run() {
             control,
             get_state,
             get_theme_pref,
-            read_user_colorways
+            read_user_colorways,
+            install_update
         ])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Show / Hide Widget", true, None::<&str>)?;
-            let on_top = CheckMenuItem::with_id(app, "on_top", "Always on Top", true, true, None::<&str>)?;
-            let autostart = CheckMenuItem::with_id(app, "autostart", "Run at Startup", true, false, None::<&str>)?;
+            let on_top =
+                CheckMenuItem::with_id(app, "on_top", "Always on Top", true, true, None::<&str>)?;
+            let autostart = CheckMenuItem::with_id(
+                app,
+                "autostart",
+                "Run at Startup",
+                true,
+                false,
+                None::<&str>,
+            )?;
             let theme_on = load_theme_pref(app.handle());
-            *THEME_ENABLED.lock().unwrap() = theme_on;
-            let dynamic_theme = CheckMenuItem::with_id(app, "dynamic_theme", "Dynamic Theme", true, theme_on, None::<&str>)?;
-            let updates = MenuItem::with_id(app, "updates", "Check for Updates", true, None::<&str>)?;
+            *util::lock(&THEME_ENABLED) = theme_on;
+            let dynamic_theme = CheckMenuItem::with_id(
+                app,
+                "dynamic_theme",
+                "Dynamic Theme",
+                true,
+                theme_on,
+                None::<&str>,
+            )?;
+            let updates =
+                MenuItem::with_id(app, "updates", "Check for Updates", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let settings = Submenu::with_id(app, "settings", "Settings", true)?;
             settings.append(&on_top)?;
@@ -139,14 +175,16 @@ pub fn run() {
                     }
                     "dynamic_theme" => {
                         let enabled = dynamic_theme.is_checked().unwrap_or(true);
-                        *THEME_ENABLED.lock().unwrap() = enabled;
+                        *util::lock(&THEME_ENABLED) = enabled;
                         save_theme_pref(app, enabled);
                         use tauri::Emitter;
                         let _ = app.emit("theme-preference", enabled);
                     }
                     "updates" => {
-                        // Real updater check: emit Some(version) when an update
-                        // exists (and install + restart), None when current.
+                        // Check only. If an update exists, hold it and tell the
+                        // UI to ask the user; the download+install happens in
+                        // `install_update` once they confirm, so nothing is
+                        // fetched or restarted behind their back.
                         let a = app.clone();
                         tauri::async_runtime::spawn(async move {
                             use tauri::Emitter;
@@ -161,21 +199,14 @@ pub fn run() {
                             match updater.check().await {
                                 Ok(Some(update)) => {
                                     let ver = update.version.clone();
+                                    *util::lock(&PENDING_UPDATE) = Some(update);
                                     let _ = a.emit("check-updates", Some(ver));
-                                    if let Err(e) =
-                                        update.download_and_install(|_, _| {}, || {}).await
-                                    {
-                                        eprintln!("[wmp] update install failed: {e}");
-                                        return;
-                                    }
-                                    a.restart();
                                 }
                                 Ok(None) => {
                                     let _ = a.emit("check-updates", None::<String>);
                                 }
                                 Err(e) => {
                                     eprintln!("[wmp] update check failed: {e}");
-                                    use tauri::Emitter;
                                     let _ = a.emit("check-updates-error", ());
                                 }
                             }

@@ -13,8 +13,20 @@
 //! internal call as `CoInitializeEx(MULTITHREADED)` — COM works here with no
 //! extra init.
 
+/// Which volume a write actually landed on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetOutcome {
+    /// The media app's own audio sessions.
+    App,
+    /// The system master volume (the app had no session yet).
+    System,
+    /// Nothing to set: no app session and no default output endpoint.
+    None,
+}
+
 #[cfg(target_os = "windows")]
 mod imp {
+    use super::SetOutcome;
     use windows::core::{Interface, GUID, PWSTR};
     use windows::Win32::Foundation::{CloseHandle, WIN32_ERROR};
     use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
@@ -71,7 +83,8 @@ mod imp {
             };
             let mut buf = [0u16; 260];
             let mut len = buf.len() as u32;
-            let rc: WIN32_ERROR = GetApplicationUserModelId(h, &mut len, Some(PWSTR(buf.as_mut_ptr())));
+            let rc: WIN32_ERROR =
+                GetApplicationUserModelId(h, &mut len, Some(PWSTR(buf.as_mut_ptr())));
             let _ = CloseHandle(h);
             if rc.is_err() {
                 return String::new();
@@ -122,11 +135,15 @@ mod imp {
                 return found;
             };
             for i in 0..count {
-                let Ok(control) = list.GetSession(i) else { continue };
+                let Ok(control) = list.GetSession(i) else {
+                    continue;
+                };
                 let Ok(control2) = control.cast::<IAudioSessionControl2>() else {
                     continue;
                 };
-                let Ok(pid) = control2.GetProcessId() else { continue };
+                let Ok(pid) = control2.GetProcessId() else {
+                    continue;
+                };
                 if !matches(pid, aumid) {
                     continue;
                 }
@@ -143,8 +160,12 @@ mod imp {
             let enumerator =
                 CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
                     .ok()?;
-            let device = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok()?;
-            device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok()
+            let device = enumerator
+                .GetDefaultAudioEndpoint(eRender, eMultimedia)
+                .ok()?;
+            device
+                .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+                .ok()
         }
     }
 
@@ -165,15 +186,30 @@ mod imp {
 
     /// Sets every session of the app; falls back to the system volume when the
     /// app has no session yet (some apps only create one once they make sound).
-    pub fn set(aumid: &str, level: f32) -> bool {
+    pub fn set(aumid: &str, level: f32) -> SetOutcome {
         let level = level.clamp(0.0, 1.0);
         let ours = sessions(aumid);
         if ours.is_empty() {
-            return unsafe {
-                endpoint().is_some_and(|e| e.SetMasterVolumeLevelScalar(level, NO_EVENT_CONTEXT).is_ok())
+            let ok = unsafe {
+                endpoint().is_some_and(|e| {
+                    e.SetMasterVolumeLevelScalar(level, NO_EVENT_CONTEXT)
+                        .is_ok()
+                })
+            };
+            return if ok {
+                SetOutcome::System
+            } else {
+                SetOutcome::None
             };
         }
-        ours.iter().all(|s| unsafe { s.SetMasterVolume(level, NO_EVENT_CONTEXT).is_ok() })
+        if ours
+            .iter()
+            .all(|s| unsafe { s.SetMasterVolume(level, NO_EVENT_CONTEXT).is_ok() })
+        {
+            SetOutcome::App
+        } else {
+            SetOutcome::None
+        }
     }
 }
 
@@ -187,8 +223,8 @@ pub fn get(_aumid: &str) -> Option<f32> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn set(_aumid: &str, _level: f32) -> bool {
-    false
+pub fn set(_aumid: &str, _level: f32) -> SetOutcome {
+    SetOutcome::None
 }
 
 #[cfg(all(test, target_os = "windows"))]
@@ -197,7 +233,10 @@ mod tests {
 
     #[test]
     fn base_strips_dir_and_extension() {
-        assert_eq!(imp::base(r"C:\Users\x\AppData\Local\Spotify.exe"), "spotify");
+        assert_eq!(
+            imp::base(r"C:\Users\x\AppData\Local\Spotify.exe"),
+            "spotify"
+        );
         assert_eq!(imp::base("Chrome"), "chrome");
         assert_eq!(imp::base(""), "");
     }

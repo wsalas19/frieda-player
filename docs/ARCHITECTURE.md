@@ -111,14 +111,16 @@ Producers of `Msg::Refresh`:
 - `session.MediaPropertiesChanged` — track metadata changed
 - `session.PlaybackInfoChanged` — play/pause state changed
 - `session.TimelinePropertiesChanged` — position/seek happened
-- delayed self-wakes (`wake_later`) used by the artwork state machine (§3.4)
+- delayed self-wakes (a scheduled `deadline`) used by the artwork state machine (§3.4)
 
 Producers of `Msg::Control`: the UI, via the `control` Tauri command.
 
-**There is no polling.** The loop blocks on `rx.recv_timeout(5s)`; the timeout
-exists only to periodically re-sync the playback position, because SMTC does
-not emit an event every second during normal playback — the frontend
-interpolates position locally between real updates (§5.2).
+**There is no polling.** The loop blocks on `rx.recv_timeout(..)`, waiting at
+most 5s; the timeout exists only to periodically re-sync the playback position,
+because SMTC does not emit an event every second during normal playback — the
+frontend interpolates position locally between real updates (§5.2). A pending
+artwork re-read (a `deadline`) shortens that wait so the retry fires on time
+instead of spawning a timer thread.
 
 Loop iteration, in order:
 1. Re-fetch `GetCurrentSession()`. If the session identity changed (compared
@@ -128,6 +130,12 @@ Loop iteration, in order:
    keys reset) so the empty state doesn't wear the last track's colorway.
 3. Read the session's media properties (title/artist/album),
    playback info (playing flag) and timeline (position/duration).
+   The timeline's `Position` is reported **as of `LastUpdatedTime`**, not
+   "now", and providers only push an update every few seconds. While playing,
+   the backend adds the elapsed time (`now_100ns() - LastUpdatedTime`) and
+   clamps to the track end, so `position_ms` is live. Without this, every extra
+   state read (e.g. while dragging the volume slider) re-emits a stale position
+   and the UI's progress bar visibly snaps backwards.
 4. Run the artwork state machine (§3.4).
 5. **Diff against last emitted state** and emit only what changed:
    - `media-state` — lightweight metadata/timeline JSON
@@ -312,8 +320,12 @@ reads the file.
 Tray **Check for Updates** → async task checks the configured endpoint
 (`releases/latest/download/latest.json` on this repo) →
 
-- update available: emit `check-updates` with the new version (UI toasts
-  "Downloading…"), then `download_and_install` and restart the app;
+- update available: stash the `Update` in `PENDING_UPDATE` and emit
+  `check-updates` with the new version. The UI shows a confirmation banner
+  ("Update & Restart" / "Later"); confirming invokes the `install_update`
+  command, which takes the stashed update, `download_and_install`s it and
+  lets the Windows installer relaunch the app. Nothing is downloaded until
+  the user confirms;
 - current: emit `check-updates` with `null` (UI toasts "latest version");
 - check failed: emit `check-updates-error` (UI toasts an apology) and log.
 

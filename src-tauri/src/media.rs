@@ -2,8 +2,10 @@ use serde::Serialize;
 use std::ffi::c_void;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+
+use crate::util::lock;
 
 #[derive(Serialize, Clone, Default, PartialEq)]
 pub struct MediaState {
@@ -40,15 +42,15 @@ static LAST_STATE: Mutex<Option<MediaState>> = Mutex::new(None);
 static LAST_ART: Mutex<Option<String>> = Mutex::new(None);
 
 pub fn current_state() -> Option<Snapshot> {
-    let state = LAST_STATE.lock().unwrap().clone()?;
+    let state = lock(&LAST_STATE).clone()?;
     Some(Snapshot {
         state,
-        art: LAST_ART.lock().unwrap().clone(),
+        art: lock(&LAST_ART).clone(),
     })
 }
 
 pub fn send_control(action: &str) {
-    if let Some(tx) = CONTROL_TX.lock().unwrap().as_ref() {
+    if let Some(tx) = lock(&CONTROL_TX).as_ref() {
         let _ = tx.send(Msg::Control(action.to_string()));
     }
 }
@@ -56,6 +58,23 @@ pub fn send_control(action: &str) {
 pub fn spawn(app: AppHandle) {
     std::thread::spawn(move || backend_loop(app));
 }
+
+/// Current UTC time in 100-nanosecond ticks since 1601, matching WinRT's
+/// `DateTime::UniversalTime` so it can be compared with `LastUpdatedTime`.
+#[cfg(target_os = "windows")]
+fn now_100ns() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    const UNIX_TO_FILETIME_100NS: i64 = 116_444_736_000_000_000;
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64 / 100 + UNIX_TO_FILETIME_100NS)
+        .unwrap_or(0)
+}
+
+/// A day in 100-ns ticks — an upper bound on the elapsed time we'll trust from
+/// a provider's `LastUpdatedTime`, so a bogus timestamp can't fling the bar.
+#[cfg(target_os = "windows")]
+const DAY_100NS: i64 = 24 * 60 * 60 * 10_000_000;
 
 #[cfg(target_os = "windows")]
 fn backend_loop(app: AppHandle) {
@@ -75,7 +94,7 @@ fn backend_loop(app: AppHandle) {
     }
 
     let (tx, rx) = mpsc::channel::<Msg>();
-    *CONTROL_TX.lock().unwrap() = Some(tx.clone());
+    *lock(&CONTROL_TX) = Some(tx.clone());
 
     // RequestAsync can fail right after login; retry fast a few times, then
     // slow-retry so a disabled SMTC service costs one wake per 30s instead of
@@ -121,6 +140,9 @@ fn backend_loop(app: AppHandle) {
     let mut stale_reads: u32 = 0;
     // Session whose change events we're currently subscribed to.
     let mut bound: Option<Session> = None;
+    // Earliest next self-wake (artwork settle / stale-art retry). None = only
+    // the 5s position re-sync wakes us.
+    let mut deadline: Option<Instant> = None;
 
     // ponytail: 5s re-sync instead of the old 1s poll; the frontend
     // interpolates position in between, so events carry all real changes.
@@ -149,9 +171,7 @@ fn backend_loop(app: AppHandle) {
         }
 
         if let Some(session) = &current {
-            let props = session
-                .TryGetMediaPropertiesAsync()
-                .and_then(|op| op.get());
+            let props = session.TryGetMediaPropertiesAsync().and_then(|op| op.get());
             if let Err(e) = &props {
                 eprintln!("[wmp] TryGetMediaPropertiesAsync error: {e}");
             }
@@ -161,10 +181,10 @@ fn backend_loop(app: AppHandle) {
                 state.artist = props.Artist().unwrap_or_default().to_string();
                 state.album = props.AlbumTitle().unwrap_or_default().to_string();
 
-                // TEMP instrumentation (strip once the artist question is
-                // settled): what the provider actually publishes. SMTC has no
+                // Debug-only: what the provider actually publishes. SMTC has no
                 // collaborators field, so if a "feat." name is missing it was
                 // never sent — Tidal/Spotify report only the primary artist.
+                #[cfg(debug_assertions)]
                 if state.title != last.title || state.artist != last.artist {
                     eprintln!(
                         "[wmp:props] title={:?} artist={:?} album_artist={:?} subtitle={:?}",
@@ -175,7 +195,10 @@ fn backend_loop(app: AppHandle) {
                     );
                 }
 
-                let aumid = session.SourceAppUserModelId().unwrap_or_default().to_string();
+                let aumid = session
+                    .SourceAppUserModelId()
+                    .unwrap_or_default()
+                    .to_string();
                 // ponytail: a session enumeration per loop iteration (~1ms,
                 // cadence is the 5s tick plus real media events). Cache it
                 // against `aumid` if it ever shows up in a profile.
@@ -198,14 +221,14 @@ fn backend_loop(app: AppHandle) {
                             // ~5s of retries we accept the read.
                             if prev_art.as_ref() == Some(&a) && stale_reads < 5 {
                                 stale_reads += 1;
-                                wake_later(&tx, Duration::from_secs(1));
+                                deadline = Some(Instant::now() + Duration::from_secs(1));
                             } else {
                                 stale_reads = 0;
                                 last_art_key = Some(art_key);
                                 art = Some(a);
                             }
                         } else {
-                            wake_later(&tx, Duration::from_secs(1));
+                            deadline = Some(Instant::now() + Duration::from_secs(1));
                         }
                     }
                     Some(key) if *key != art_key => {
@@ -219,7 +242,7 @@ fn backend_loop(app: AppHandle) {
                             prev_art = art.take();
                             stale_reads = 0;
                             last_art_key = None;
-                            wake_later(&tx, Duration::from_millis(500));
+                            deadline = Some(Instant::now() + Duration::from_millis(500));
                         }
                     }
                     Some(_) => {}
@@ -233,8 +256,32 @@ fn backend_loop(app: AppHandle) {
                 );
             }
             if let Ok(tl) = session.GetTimelineProperties() {
-                state.position_ms = tl.Position().map(|t| t.Duration as u64 / 10_000).unwrap_or(0);
-                state.duration_ms = tl.EndTime().map(|t| t.Duration as u64 / 10_000).unwrap_or(0);
+                let raw = tl.Position().map(|t| t.Duration).unwrap_or(0);
+                let end = tl.EndTime().map(|t| t.Duration).unwrap_or(0);
+                // SMTC reports `Position` as of `LastUpdatedTime`, and providers
+                // only push a timeline update every few seconds. Reading it raw
+                // makes the UI snap backwards to a stale value on every extra
+                // state read (e.g. while dragging volume). While playing, add the
+                // elapsed time so the reported position is live; clamp to the
+                // track end so a stale clock can't run past it.
+                //
+                // Guard the timestamp: providers that never published a timeline
+                // can hand back an unset (zero) `LastUpdatedTime`, which would
+                // otherwise make `elapsed` enormous and slam the bar to the end.
+                let position = if state.playing {
+                    let elapsed = tl
+                        .LastUpdatedTime()
+                        .ok()
+                        .filter(|t| t.UniversalTime > 0)
+                        .map(|t| now_100ns() - t.UniversalTime)
+                        .filter(|e| (0..DAY_100NS).contains(e))
+                        .unwrap_or(0);
+                    (raw + elapsed).min(end.max(raw))
+                } else {
+                    raw
+                };
+                state.position_ms = position.max(0) as u64 / 10_000;
+                state.duration_ms = end.max(0) as u64 / 10_000;
             }
         }
 
@@ -243,27 +290,35 @@ fn backend_loop(app: AppHandle) {
         // the (large) base64 payload.
         if art != last_art {
             last_art = art.clone();
-            *LAST_ART.lock().unwrap() = last_art.clone();
+            *lock(&LAST_ART) = last_art.clone();
             let _ = app.emit("media-art", &art);
         }
         if state != last {
             last = state.clone();
-            *LAST_STATE.lock().unwrap() = Some(state.clone());
+            *lock(&LAST_STATE) = Some(state.clone());
             let _ = app.emit("media-state", &state);
         }
 
-        // Block until an SMTC event fires, a control arrives, or the 5s
-        // position re-sync is due. Controls trigger an immediate re-read.
-        match rx.recv_timeout(Duration::from_secs(5)) {
+        // Block until an SMTC event fires, a control arrives, or the next
+        // scheduled re-read (artwork settle / stale retry) is due. A real event
+        // still wakes us immediately; `deadline` only sets the *earliest* extra
+        // wake, replacing the old thread-per-retry timer.
+        let wait = deadline
+            .map(|d| d.saturating_duration_since(Instant::now()))
+            .unwrap_or(Duration::from_secs(5))
+            .min(Duration::from_secs(5));
+        match rx.recv_timeout(wait) {
             Ok(Msg::Control(action)) => {
                 if let Some(session) = &current {
-                    apply_control(session, &action);
+                    apply_control(&app, session, &action);
                     while let Ok(Msg::Control(extra)) = rx.try_recv() {
-                        apply_control(session, &extra);
+                        apply_control(&app, session, &extra);
                     }
                 }
             }
-            Ok(Msg::Refresh) | Err(_) => {}
+            Ok(Msg::Refresh) => {}
+            // Timeout: if a deadline was pending, it has now elapsed.
+            Err(_) => deadline = None,
         }
     }
 }
@@ -282,21 +337,11 @@ where
     })
 }
 
-/// One-shot delayed refresh: lets SMTC settle before the next state read.
-#[cfg(target_os = "windows")]
-fn wake_later(tx: &Sender<Msg>, delay: Duration) {
-    let tx = tx.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(delay);
-        let _ = tx.send(Msg::Refresh);
-    });
-}
-
 #[cfg(target_os = "windows")]
 fn session_key(
     session: Option<&windows::Media::Control::GlobalSystemMediaTransportControlsSession>,
 ) -> Option<*mut c_void> {
-    use windows::core::{Interface, IUnknown};
+    use windows::core::{IUnknown, Interface};
     session
         .and_then(|s| s.cast::<IUnknown>().ok())
         .map(|u| u.as_raw())
@@ -351,15 +396,30 @@ fn read_thumbnail(
 
 #[cfg(target_os = "windows")]
 fn apply_control(
+    app: &AppHandle,
     session: &windows::Media::Control::GlobalSystemMediaTransportControlsSession,
     action: &str,
 ) {
     // Volume is not an SMTC call: it goes to the app's WASAPI sessions (or the
     // system endpoint) via the app's AUMID. Handled first to keep the match flat.
-    if let Some(level) = action.strip_prefix("volume:").and_then(|v| v.parse::<f32>().ok()) {
-        let aumid = session.SourceAppUserModelId().unwrap_or_default().to_string();
-        if !crate::volume::set(&aumid, level) {
-            eprintln!("[wmp] volume: no audio session for {aumid:?} and no system endpoint");
+    if let Some(level) = action
+        .strip_prefix("volume:")
+        .and_then(|v| v.parse::<f32>().ok())
+    {
+        let aumid = session
+            .SourceAppUserModelId()
+            .unwrap_or_default()
+            .to_string();
+        match crate::volume::set(&aumid, level) {
+            // No session for the app yet: we changed the system master volume
+            // instead, which the user should know about.
+            crate::volume::SetOutcome::System => {
+                let _ = app.emit("volume-fallback", &aumid);
+            }
+            crate::volume::SetOutcome::None => {
+                eprintln!("[wmp] volume: no audio session for {aumid:?} and no system endpoint");
+            }
+            crate::volume::SetOutcome::App => {}
         }
         return;
     }
@@ -369,7 +429,10 @@ fn apply_control(
         "next" => session.TrySkipNextAsync().and_then(|op| op.get()),
         "prev" => session.TrySkipPreviousAsync().and_then(|op| op.get()),
         // TimeSpan is in 100ns ticks.
-        _ => match action.strip_prefix("seek:").and_then(|ms| ms.parse::<i64>().ok()) {
+        _ => match action
+            .strip_prefix("seek:")
+            .and_then(|ms| ms.parse::<i64>().ok())
+        {
             Some(ms) => session
                 .TryChangePlaybackPositionAsync(ms * 10_000)
                 .and_then(|op| op.get()),

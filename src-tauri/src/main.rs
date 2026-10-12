@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    wmp_project_lib::run()
+    frieda_player_lib::run()
 }
