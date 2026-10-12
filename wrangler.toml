@@ -1,5 +1,7 @@
-# Cloudflare Pages project config.
-# Lets both the Git integration and `wrangler pages deploy` find the site.
-# Rename `name` to whatever you call the Pages project.
+# Cloudflare Worker that serves the static landing page in site/.
+# Deploy with:  npm run deploy:site
 name = "frieda-player"
-pages_build_output_dir = "site"
+compatibility_date = "2026-01-01"
+
+[assets]
+directory = "site"

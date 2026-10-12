@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://frieda-player.pages.dev/sitemap.xml
+Sitemap: https://frieda-player.wsalas.workers.dev/sitemap.xml

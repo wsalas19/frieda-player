@@ -13,6 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "release": "node scripts/release.mjs",
+    "site:url": "node scripts/set-site-url.mjs",
+    "deploy:site": "npx --yes wrangler deploy",
     "tauri": "tauri"
   },
   "dependencies": {
