@@ -12,18 +12,7 @@ Native SMTC integration · Rust + Tauri 2 · no Electron, no bloat
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-orange.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Platform-Windows-informational.svg)](#roadmap)
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/widget-death.png" width="400" alt="The Frieda Player card tinted red to Death's 'The Sound of Perseverance' artwork"></td>
-    <td width="50%"><img src="docs/widget-taylor.png" width="400" alt="The Frieda Player card tinted gold to Taylor Swift's 'Fearless (Taylor's Version)' artwork"></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Death — red, graded to the cover</em></td>
-    <td align="center"><em>Taylor Swift — gold, graded to the cover</em></td>
-  </tr>
-</table>
-<br>
-<em>Color-graded to the album art — artwork, metadata, animated progress.</em>
+<img src="docs/fp-banner.jpg" width="760" alt="Frieda Player — a now-playing widget for Windows, color-graded to the album art">
 
 </div>
 
