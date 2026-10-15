@@ -91,8 +91,9 @@ Grab the latest installer from [Releases](https://github.com/wsalas19/frieda-pla
 
 The app updates itself: the tray menu's **Check for Updates** offers new
 releases, and the card asks before anything is downloaded. Windows Defender
-SmartScreen may warn about an unsigned beta installer — expected until
-Authenticode signing lands (see roadmap).
+SmartScreen may warn "Unknown Publisher" — click **More info**, then
+**Run anyway**. (The warning fades as more users run the app; we're exploring
+free signing alternatives — see the roadmap.)
 
 Or build from source (below).
 
@@ -188,7 +189,8 @@ npm run tauri build
 - [x] Packaging polish: custom app/tray icon, signed auto-update channel
 - [x] CI: Windows installers + updater artifacts built on tag
       (`.github/workflows/release.yml`)
-- [ ] Authenticode code signing (removes SmartScreen warnings on install)
+- [ ] SmartScreen mitigation — explore Microsoft Store (MSIX, free signing) or
+      FOSS signing programs (OSSign / SignPath)
 - [ ] **Phase 2 — Linux:** swap the media backend for MPRIS behind the existing
       `#[cfg(target_os)]` seam (`src-tauri/src/media.rs`), WebKitGTK frontend,
       `.AppImage`/`.deb` artifacts, CI for Linux artifacts on tag
