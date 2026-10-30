@@ -50,7 +50,7 @@
       const tag = rel.tag_name || "";
       if (tag) {
         document.querySelectorAll("[data-version]").forEach((el) => {
-          el.textContent = `${tag} · free & open source`;
+          el.textContent = tag;
         });
       }
       // Prefer the Windows installer asset; otherwise the release page.
