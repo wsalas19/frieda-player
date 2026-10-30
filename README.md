@@ -183,6 +183,20 @@ Release build (installs land in `src-tauri/target/release/bundle/`):
 npm run tauri build
 ```
 
+## Landing page
+
+The static site in `site/` is served by the `frieda-player` Cloudflare Worker
+configured in `wrangler.toml`. Pushes to `main` deploy automatically through
+Workers Builds.
+
+```bash
+npm run site:build   # validate local asset references
+npm run deploy:site  # manual deploy with Wrangler
+```
+
+If the Worker URL changes, repoint the canonical and social URLs with
+`npm run site:url -- https://<worker>.<subdomain>.workers.dev`.
+
 ## Roadmap
 
 - [x] Windows SMTC backend (metadata, artwork, controls, tray, autostart)

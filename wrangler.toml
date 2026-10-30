@@ -1,5 +1,7 @@
 # Cloudflare Worker that serves the static landing page in site/.
-# Deploy with:  npm run deploy:site
+# Build (validates local asset references):  npm run site:build
+# Deploy:                                     npm run deploy:site
+# Pushes to main also deploy automatically via Workers Builds.
 name = "frieda-player"
 compatibility_date = "2026-01-01"
 
